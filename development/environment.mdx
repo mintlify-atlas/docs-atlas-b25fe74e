@@ -49,13 +49,13 @@ DEVELOPMENT_GUILD_ID="123456789012345678"
 
 ```bash
 # PostgreSQL connection string
-DATABASE_URL="postgresql://user:password@localhost:5432/poddy"
+DATABASE_URL="postgresql://user:password@localhost:5432/database_name"
 ```
 
-For local development with Docker:
+For local development with Docker (matches docker-compose.yml):
 
 ```bash
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/poddy"
+DATABASE_URL="postgresql://poddy:poddy_dev_password@localhost:5432/poddy_dev"
 ```
 
 ### Monitoring and error tracking
@@ -65,7 +65,7 @@ DATABASE_URL="postgresql://postgres:postgres@localhost:5432/poddy"
 SENTRY_DSN="https://abc123@o123456.ingest.sentry.io/7654321"
 
 # Datadog API key for metrics (optional)
-DATADATA_API_KEY="your-datadog-api-key"
+DATADOG_API_KEY="your-datadog-api-key"
 ```
 
 ### API keys
