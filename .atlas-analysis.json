@@ -1,0 +1,112 @@
+{
+  "projectType": "general",
+  "projectName": "Poddy",
+  "projectDescription": "Discord bot for the RunPod community server with support workflows, community features, and AI-assisted Q&A.",
+  "theme": "aspen",
+  "primaryColor": "#8B5CF6",
+  "lightColor": "#A78BFA",
+  "darkColor": "#6D28D9",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/client",
+              "architecture/handlers",
+              "architecture/interaction-routing"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/setup",
+              "development/database",
+              "development/commands",
+              "development/environment"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/support-workflows",
+              "features/community",
+              "features/integrations"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Framework Classes",
+            "pages": [
+              "api/extended-client",
+              "api/application-command",
+              "api/button",
+              "api/modal",
+              "api/select-menu",
+              "api/event-handler"
+            ]
+          },
+          {
+            "group": "Utilities",
+            "pages": [
+              "api/functions",
+              "api/logger",
+              "api/language"
+            ]
+          },
+          {
+            "group": "Database",
+            "pages": [
+              "api/database-schema",
+              "api/database-models"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Zendesk ticket escalation from Discord messages and threads",
+    "Auto-threading and auto-tagging for forum channels",
+    "Community events with submissions and voting system",
+    "RunPod account linking via GraphQL API",
+    "BetterStack incident status reporting",
+    "AI-assisted Q&A using Mastra",
+    "Invite tracking and analytics",
+    "Comprehensive moderation logging"
+  ],
+  "publicApiSurface": [
+    "ExtendedClient",
+    "PoddyClient",
+    "ApplicationCommand",
+    "Button",
+    "Modal",
+    "SelectMenu",
+    "EventHandler",
+    "Functions",
+    "PoddyFunctions",
+    "Logger",
+    "ApplicationCommandHandler",
+    "ButtonHandler",
+    "ModalHandler",
+    "SelectMenuHandler",
+    "AutoCompleteHandler",
+    "TextCommandHandler",
+    "LanguageHandler"
+  ]
+}
