@@ -1,0 +1,210 @@
+---
+title: ExtendedClient
+description: The core client class that extends Discord.js Client with additional functionality for command handling, database access, and more
+---
+
+## Overview
+
+`ExtendedClient` is the foundation of the Poddy framework. It extends the Discord.js `Client` class to provide:
+
+- Automatic command, button, modal, and select menu handling
+- Database access via Prisma ORM
+- i18n language support
+- Caching layers for guilds, roles, and members
+- DataDog metrics integration
+
+## Constructor
+
+```typescript
+new ExtendedClient({
+  rest: REST,
+  gateway: WebSocketManager,
+  options: BotOptions
+})
+```
+
+<ParamField path="rest" type="REST" required>
+  The REST client for Discord API requests
+</ParamField>
+
+<ParamField path="gateway" type="WebSocketManager" required>
+  The WebSocket manager for gateway connections
+</ParamField>
+
+<ParamField path="options" type="BotOptions" required>
+  Custom bot configuration options
+</ParamField>
+
+## Properties
+
+### api
+
+<ResponseField name="api" type="API" required>
+  An API instance to make using Discord's API much easier
+</ResponseField>
+
+```typescript
+const channel = await client.api.channels.get(channelId);
+```
+
+### config
+
+<ResponseField name="config" type="typeof botConfig" required>
+  The configuration for the bot, including colors, prefixes, and bot metadata
+</ResponseField>
+
+### logger
+
+<ResponseField name="logger" type="typeof Logger" required>
+  The logger instance with Sentry integration for error tracking
+</ResponseField>
+
+### i18n
+
+<ResponseField name="i18n" type="typeof i18next" required>
+  The i18next instance for internationalization
+</ResponseField>
+
+### prisma
+
+<ResponseField name="prisma" type="PrismaClient" required>
+  Prisma ORM client for interacting with the PostgreSQL database
+</ResponseField>
+
+```typescript
+const user = await client.prisma.user.findUnique({
+  where: { discordId: '123456789' }
+});
+```
+
+### applicationCommands
+
+<ResponseField name="applicationCommands" type="Map<string, ApplicationCommand>" required>
+  Map of all registered application commands (slash commands and context menus)
+</ResponseField>
+
+### buttons
+
+<ResponseField name="buttons" type="Map<string, Button>" required>
+  Map of all registered button handlers
+</ResponseField>
+
+### modals
+
+<ResponseField name="modals" type="Map<string, Modal>" required>
+  Map of all registered modal handlers
+</ResponseField>
+
+### selectMenus
+
+<ResponseField name="selectMenus" type="Map<string, SelectMenu>" required>
+  Map of all registered select menu handlers
+</ResponseField>
+
+### events
+
+<ResponseField name="events" type="Map<keyof MappedEvents, EventHandler>" required>
+  Map of all registered event handlers
+</ResponseField>
+
+### guildOwnersCache
+
+<ResponseField name="guildOwnersCache" type="Map<string, string>" required>
+  Cache mapping guild IDs to their owner user IDs
+</ResponseField>
+
+### guildRolesCache
+
+<ResponseField name="guildRolesCache" type="Map<string, Map<string, APIRole>>" required>
+  Cache of guild roles by guild ID
+</ResponseField>
+
+### guildMeCache
+
+<ResponseField name="guildMeCache" type="Map<string, APIGuildMember>" required>
+  Cache of the bot's member object in different guilds
+</ResponseField>
+
+## Methods
+
+### start()
+
+Initializes and starts the client by loading all handlers and languages.
+
+```typescript
+await client.start();
+```
+
+<ResponseField name="returns" type="Promise<void>">
+  Resolves when all handlers and languages are loaded
+</ResponseField>
+
+### functions
+
+Getter property that returns a `Functions` utility instance.
+
+```typescript
+const timestamp = client.functions.generateTimestamp();
+```
+
+<ResponseField name="returns" type="Functions">
+  A Functions utility instance with helper methods
+</ResponseField>
+
+## Creating a custom client
+
+You can extend `ExtendedClient` to add custom functionality:
+
+```typescript lib/extensions/ExtendedClient.ts
+import ExtendedClient from "@lib/extensions/ExtendedClient.js";
+import CustomFunctions from "@src/utilities/functions.js";
+
+export class MyClient extends ExtendedClient {
+  override get functions(): CustomFunctions {
+    return new CustomFunctions(this);
+  }
+}
+```
+
+```typescript src/index.ts
+import { MyClient } from "@src/client.js";
+import { REST } from "@discordjs/rest";
+import { WebSocketManager } from "@discordjs/ws";
+
+const client = new MyClient({
+  rest: new REST({ version: "10" }).setToken(process.env.DISCORD_TOKEN),
+  gateway: new WebSocketManager({
+    token: process.env.DISCORD_TOKEN,
+    intents: GatewayIntentBits.Guilds | GatewayIntentBits.GuildMessages,
+  }),
+  options: {
+    // Your custom options
+  },
+});
+
+await client.start();
+```
+
+## Example usage
+
+```typescript src/bot/events/ready.ts
+import EventHandler from "@lib/classes/EventHandler.js";
+import type ExtendedClient from "@lib/extensions/ExtendedClient.js";
+import { GatewayDispatchEvents } from "discord-api-types/v10";
+
+export default class Ready extends EventHandler {
+  public constructor(client: ExtendedClient) {
+    super(client, GatewayDispatchEvents.Ready, true);
+  }
+
+  public override async run({ data, shardId }) {
+    this.client.logger.info(
+      `Logged in as ${data.user.username} on shard ${shardId}`
+    );
+
+    // Access all client features
+    const guilds = await this.client.prisma.guild.findMany();
+    this.client.logger.info(`Serving ${guilds.length} guilds`);
+  }
+}
+```

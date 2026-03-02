@@ -1,0 +1,251 @@
+---
+title: ApplicationCommand
+description: Base class for creating slash commands and context menu commands with built-in validation and permission handling
+---
+
+## Overview
+
+`ApplicationCommand` is the base class for all application commands (slash commands and context menus). It provides:
+
+- Automatic permission validation
+- Cooldown management
+- Developer-only and owner-only restrictions
+- Pre-check hooks for custom validation
+
+## Constructor
+
+```typescript
+new ApplicationCommand(client, options)
+```
+
+<ParamField path="client" type="ExtendedClient" required>
+  The extended client instance
+</ParamField>
+
+<ParamField path="options" type="object" required>
+  Configuration options for the command
+
+  <ParamField path="options.options" type="RESTPostAPIApplicationCommandsJSONBody" required>
+    Discord API command options (name, description, type, etc.)
+  </ParamField>
+
+  <ParamField path="options.clientPermissions" type="Permissions">
+    Permissions the bot needs to execute this command. Defaults to "0" (none)
+  </ParamField>
+
+  <ParamField path="options.cooldown" type="number">
+    Cooldown in milliseconds. Defaults to 0 (no cooldown)
+  </ParamField>
+
+  <ParamField path="options.devOnly" type="boolean">
+    Whether this command can only be used by developers. Defaults to false
+  </ParamField>
+
+  <ParamField path="options.ownerOnly" type="boolean">
+    Whether this command can only be used by the guild owner. Defaults to false
+  </ParamField>
+
+  <ParamField path="options.guilds" type="string[]">
+    Array of guild IDs to register this command in. If provided, the command will not be registered globally
+  </ParamField>
+</ParamField>
+
+## Properties
+
+### name
+
+<ResponseField name="name" type="string" required>
+  The name of the application command
+</ResponseField>
+
+### type
+
+<ResponseField name="type" type="ApplicationCommandType" required>
+  The type of application command (ChatInput, User, or Message)
+</ResponseField>
+
+### options
+
+<ResponseField name="options" type="RESTPostAPIApplicationCommandsJSONBody" required>
+  The Discord API command options
+</ResponseField>
+
+### cooldown
+
+<ResponseField name="cooldown" type="number" required>
+  The cooldown in milliseconds
+</ResponseField>
+
+### guilds
+
+<ResponseField name="guilds" type="string[]" required>
+  Array of guild IDs this command is registered in
+</ResponseField>
+
+## Methods
+
+### validate()
+
+Validates the interaction against permissions, cooldowns, and restrictions.
+
+```typescript
+const error = await command.validate({ interaction, language, shardId });
+```
+
+<ParamField path="interaction" type="APIApplicationCommandInteraction" required>
+  The interaction to validate
+</ParamField>
+
+<ParamField path="language" type="Language" required>
+  The language instance for error messages
+</ParamField>
+
+<ParamField path="shardId" type="number" required>
+  The shard ID the interaction was received on
+</ParamField>
+
+<ResponseField name="returns" type="Promise<APIEmbed | null>">
+  Returns an error embed if validation fails, or null if validation succeeds
+</ResponseField>
+
+### applyCooldown()
+
+Applies a cooldown to a user for this command.
+
+```typescript
+await command.applyCooldown(userId, 5000); // 5 second cooldown
+```
+
+<ParamField path="userId" type="string" required>
+  The user ID to apply the cooldown to
+</ParamField>
+
+<ParamField path="cooldown" type="number">
+  Custom cooldown duration. Uses the command's default cooldown if not provided
+</ParamField>
+
+<ResponseField name="returns" type="Promise<boolean>">
+  Returns true if cooldown was applied, false otherwise
+</ResponseField>
+
+### preCheck()
+
+Custom validation hook that runs after standard validation.
+
+```typescript
+public override async preCheck({ interaction, language, shardId }) {
+  if (!userHasRequiredRole(interaction)) {
+    return [false, { title: "Missing Role", description: "You need the Member role" }];
+  }
+  return [true];
+}
+```
+
+<ResponseField name="returns" type="Promise<[boolean, APIEmbed?]>">
+  Returns a tuple: [isValid, errorEmbed?]
+</ResponseField>
+
+### run()
+
+Executes the command. Override this method to implement your command logic.
+
+```typescript
+public override async run({ interaction, language, shardId }) {
+  // Your command implementation
+}
+```
+
+## Creating a slash command
+
+```typescript src/bot/applicationCommands/misc/ping.ts
+import ApplicationCommand from "@lib/classes/ApplicationCommand.js";
+import type Language from "@lib/classes/Language.js";
+import type ExtendedClient from "@lib/extensions/ExtendedClient.js";
+import type { APIInteractionWithArguments } from "@lib/typings/index.js";
+import { ApplicationCommandType, MessageFlags } from "discord-api-types/v10";
+
+export default class Ping extends ApplicationCommand {
+  public constructor(client: ExtendedClient) {
+    super(client, {
+      options: {
+        name: "ping",
+        description: "Check the bot's latency",
+        type: ApplicationCommandType.ChatInput,
+      },
+      cooldown: 3000, // 3 second cooldown
+    });
+  }
+
+  public override async run({
+    interaction,
+    language,
+  }: {
+    interaction: APIInteractionWithArguments;
+    language: Language;
+    shardId: number;
+  }) {
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("PONG"),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+}
+```
+
+## Creating a context menu command
+
+```typescript src/bot/applicationCommands/user/userInfo.ts
+import ApplicationCommand from "@lib/classes/ApplicationCommand.js";
+import { ApplicationCommandType } from "discord-api-types/v10";
+
+export default class UserInfo extends ApplicationCommand {
+  public constructor(client: ExtendedClient) {
+    super(client, {
+      options: {
+        name: "User Info",
+        type: ApplicationCommandType.User,
+      },
+    });
+  }
+
+  public override async run({ interaction, language }) {
+    const targetUser = interaction.data.resolved.users[interaction.data.target_id];
+    
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      embeds: [{
+        title: `Info for ${targetUser.username}`,
+        fields: [
+          { name: "ID", value: targetUser.id },
+          { name: "Created", value: `<t:${Math.floor(Date.parse(targetUser.created_at) / 1000)}:R>` },
+        ],
+      }],
+    });
+  }
+}
+```
+
+## Using permissions and restrictions
+
+```typescript src/bot/applicationCommands/admin/ban.ts
+import ApplicationCommand from "@lib/classes/ApplicationCommand.js";
+import { ApplicationCommandType, PermissionFlagsBits } from "discord-api-types/v10";
+
+export default class Ban extends ApplicationCommand {
+  public constructor(client: ExtendedClient) {
+    super(client, {
+      options: {
+        name: "ban",
+        description: "Ban a user from the server",
+        type: ApplicationCommandType.ChatInput,
+        default_member_permissions: String(PermissionFlagsBits.BanMembers),
+      },
+      clientPermissions: String(PermissionFlagsBits.BanMembers),
+    });
+  }
+
+  public override async run({ interaction, language }) {
+    // Command automatically validates user has BanMembers permission
+    // and bot has BanMembers permission before this runs
+  }
+}
+```

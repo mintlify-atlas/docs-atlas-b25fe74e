@@ -1,0 +1,514 @@
+---
+title: Creating commands and interactions
+description: Build slash commands, buttons, modals, and other Discord interactions
+---
+
+## Overview
+
+Poddy uses a class-based architecture for Discord interactions. All interaction types extend base classes from `@lib/classes/*` and are automatically loaded by handlers.
+
+## File structure
+
+Interaction files are organized by category in `src/bot/`:
+
+```
+src/bot/
+  applicationCommands/{category}/{command}.ts   # Slash commands and context menus
+  autoCompletes/{category}/{autocomplete}.ts    # Autocomplete handlers
+  buttons/{category}/{button}.ts                # Button click handlers
+  modals/{category}/{modal}.ts                  # Modal submit handlers
+  selectMenus/{category}/{menu}.ts              # Select menu handlers
+  textCommands/{category}/{command}.ts          # Legacy prefix commands
+  events/{eventName}.ts                         # Gateway events
+```
+
+## Application commands
+
+Application commands are slash commands (`/ping`) or context menu commands (right-click menu).
+
+### Creating a slash command
+
+Create a file in `src/bot/applicationCommands/{category}/{name}.ts`:
+
+```typescript src/bot/applicationCommands/misc/ping.ts
+import ApplicationCommand from "@lib/classes/ApplicationCommand.js";
+import type Language from "@lib/classes/Language.js";
+import type ExtendedClient from "@lib/extensions/ExtendedClient.js";
+import type { APIInteractionWithArguments } from "@lib/typings/index.js";
+import { DiscordSnowflake } from "@sapphire/snowflake";
+import type { APIApplicationCommandInteraction } from "discord-api-types/v10";
+import { ApplicationCommandType, MessageFlags } from "discord-api-types/v10";
+
+export default class Ping extends ApplicationCommand {
+  public constructor(client: ExtendedClient) {
+    super(client, {
+      options: {
+        ...client.languageHandler.generateLocalizationsForApplicationCommandOptionType({
+          name: "PING_COMMAND_NAME",
+          description: "PING_COMMAND_DESCRIPTION",
+        }),
+        type: ApplicationCommandType.ChatInput,
+      },
+    });
+  }
+
+  public override async run({
+    interaction,
+    language,
+  }: {
+    interaction: APIInteractionWithArguments<APIApplicationCommandInteraction>;
+    language: Language;
+    shardId: number;
+  }) {
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("PING"),
+      allowed_mentions: { parse: [], replied_user: true },
+      flags: MessageFlags.Ephemeral,
+    });
+
+    const message = await this.client.api.interactions.getOriginalReply(
+      interaction.application_id,
+      interaction.token
+    );
+
+    const hostLatency = new Date(message.timestamp).getTime() - 
+      DiscordSnowflake.timestampFrom(interaction.id);
+
+    return this.client.api.interactions.editReply(
+      interaction.application_id,
+      interaction.token,
+      {
+        content: language.get("PONG", { hostLatency }),
+        allowed_mentions: { parse: [], replied_user: true },
+      }
+    );
+  }
+}
+```
+
+### Command options
+
+The base `ApplicationCommand` class accepts these options:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `options` | `RESTPostAPIApplicationCommandsJSONBody` | Discord command definition |
+| `permissions` | `Permissions` | Required user permissions |
+| `clientPermissions` | `Permissions` | Required bot permissions |
+| `cooldown` | `number` | Cooldown in milliseconds |
+| `devOnly` | `boolean` | Restrict to developers only |
+| `ownerOnly` | `boolean` | Restrict to server owner only |
+| `guilds` | `string[]` | Limit to specific guilds |
+
+### Example with permissions and cooldown
+
+```typescript
+export default class BanUser extends ApplicationCommand {
+  public constructor(client: ExtendedClient) {
+    super(client, {
+      options: {
+        name: "ban",
+        description: "Ban a user from the server",
+        type: ApplicationCommandType.ChatInput,
+        default_member_permissions: "0", // Administrator only
+      },
+      clientPermissions: PermissionFlagsBits.BanMembers,
+      cooldown: 5000, // 5 second cooldown
+    });
+  }
+}
+```
+
+## Buttons
+
+Buttons are interactive components that users can click.
+
+### Creating a button handler
+
+Create a file in `src/bot/buttons/{category}/{name}.ts`:
+
+```typescript src/bot/buttons/zendesk/escalateToZendesk.ts
+import Button from "@lib/classes/Button.js";
+import type Language from "@lib/classes/Language.js";
+import type { PoddyClient } from "@src/client.js";
+import {
+  type APIMessageComponentButtonInteraction,
+  ComponentType,
+  MessageFlags,
+  TextInputStyle,
+} from "discord-api-types/v10";
+
+export default class EscalateToZendesk extends Button<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, {
+      name: "escalateToZendesk",
+    });
+  }
+
+  public override async run({
+    interaction,
+    language,
+  }: {
+    interaction: APIMessageComponentButtonInteraction;
+    language: Language;
+    shardId: number;
+  }) {
+    // Parse custom_id: "escalateToZendesk.message.12345.67890"
+    const [_, type, id, userId] = interaction.data.custom_id.split(".");
+
+    // Check if ticket already exists
+    const existingTicket = await this.client.prisma.zendeskTicket.findUnique({
+      where: { escalatedId: id }
+    });
+
+    if (existingTicket) {
+      return this.client.api.interactions.reply(interaction.id, interaction.token, {
+        embeds: [{
+          title: language.get("TICKET_ALREADY_EXISTS_TITLE"),
+          description: language.get("TICKET_ALREADY_EXISTS_DESCRIPTION", {
+            ticketId: existingTicket.id
+          }),
+          color: this.client.config.colors.success,
+        }],
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    // Show modal to collect email
+    return this.client.api.interactions.createModal(
+      interaction.id,
+      interaction.token,
+      {
+        title: language.get("OPEN_ZENDESK_TICKET_BUTTON_LABEL"),
+        custom_id: interaction.data.custom_id,
+        components: [{
+          type: ComponentType.ActionRow,
+          components: [{
+            type: ComponentType.TextInput,
+            custom_id: "email",
+            label: language.get("ESCALATE_TO_ZENDESK_EMAIL_LABEL"),
+            style: TextInputStyle.Short,
+            placeholder: language.get("ESCALATE_TO_ZENDESK_EMAIL_PLACEHOLDER"),
+            required: true,
+          }],
+        }],
+      }
+    );
+  }
+}
+```
+
+### Custom ID routing
+
+Buttons are matched by `custom_id.startsWith(handler.name)`. The remaining segments are dot-separated metadata:
+
+```typescript
+// custom_id: "escalateToZendesk.message.12345.67890"
+const [_, type, id, userId] = interaction.data.custom_id.split(".");
+// type = "message"
+// id = "12345"
+// userId = "67890"
+```
+
+This allows one button handler to process multiple button instances with different data.
+
+## Modals
+
+Modals are forms that collect user input.
+
+### Creating a modal handler
+
+Create a file in `src/bot/modals/{category}/{name}.ts`:
+
+```typescript src/bot/modals/zendesk/escalateToZendesk.ts
+import Modal from "@lib/classes/Modal.js";
+import type Language from "@lib/classes/Language.js";
+import type { PoddyClient } from "@src/client";
+import {
+  type APIModalSubmitGuildInteraction,
+  ComponentType,
+  MessageFlags,
+} from "discord-api-types/v10";
+
+export default class EscalateToZendesk extends Modal<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, {
+      name: "escalateToZendesk",
+    });
+  }
+
+  public override async run({
+    interaction,
+  }: {
+    interaction: APIModalSubmitGuildInteraction;
+    language: Language;
+    shardId: number;
+  }) {
+    await this.client.api.interactions.defer(interaction.id, interaction.token, {
+      flags: MessageFlags.Ephemeral,
+    });
+
+    // Extract input values
+    const email = interaction.data.components
+      .filter((component) => component.type === ComponentType.ActionRow)
+      .flatMap((row) => row.components)
+      .find((component) => component.type === ComponentType.TextInput)?.value;
+
+    // Parse custom_id metadata
+    const [_, type, id, userId] = interaction.data.custom_id.split(".");
+
+    // Process the escalation
+    await this.client.functions.submitTicket(type, email, user, id, interaction);
+  }
+}
+```
+
+## Using PoddyClient generics
+
+When you need access to `PoddyFunctions` methods, use the generic type parameter:
+
+```typescript
+import Button from "@lib/classes/Button.js";
+import type { PoddyClient } from "@src/client.js";
+
+export default class MyButton extends Button<PoddyClient> {
+  public override async run({ interaction }) {
+    // Now you can access PoddyFunctions methods
+    await this.client.functions.submitTicket(...);
+    await this.client.functions.uploadAttachmentsToZendesk(...);
+  }
+}
+```
+
+The same applies to `Modal<PoddyClient>`, `SelectMenu<PoddyClient>`, etc.
+
+## Select menus
+
+Select menus allow users to choose from a dropdown list.
+
+Create a file in `src/bot/selectMenus/{category}/{name}.ts`:
+
+```typescript
+import SelectMenu from "@lib/classes/SelectMenu.js";
+import type Language from "@lib/classes/Language.js";
+import type { PoddyClient } from "@src/client.js";
+import type { APIMessageComponentSelectMenuInteraction } from "discord-api-types/v10";
+
+export default class RoleSelect extends SelectMenu<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, {
+      name: "roleSelect",
+    });
+  }
+
+  public override async run({
+    interaction,
+    language,
+  }: {
+    interaction: APIMessageComponentSelectMenuInteraction;
+    language: Language;
+    shardId: number;
+  }) {
+    const selectedRoles = interaction.data.values;
+
+    // Process selected roles
+    await this.client.api.guilds.addRoleToMember(
+      interaction.guild_id!,
+      interaction.member!.user.id,
+      selectedRoles[0]
+    );
+  }
+}
+```
+
+## Autocomplete
+
+Autocomplete handlers provide suggestions as users type command options.
+
+Create a file in `src/bot/autoCompletes/{category}/{name}.ts`:
+
+```typescript
+import AutoComplete from "@lib/classes/AutoComplete.js";
+import type Language from "@lib/classes/Language.js";
+import type { PoddyClient } from "@src/client.js";
+import type { APIApplicationCommandAutocompleteInteraction } from "discord-api-types/v10";
+
+export default class TagAutocomplete extends AutoComplete<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, {
+      name: "tag",
+    });
+  }
+
+  public override async run({
+    interaction,
+  }: {
+    interaction: APIApplicationCommandAutocompleteInteraction;
+    language: Language;
+    shardId: number;
+  }) {
+    const focusedValue = interaction.data.options
+      .find((opt) => opt.focused)?.value || "";
+
+    const tags = await this.client.prisma.tag.findMany({
+      where: {
+        name: { contains: focusedValue, mode: "insensitive" }
+      },
+      take: 25
+    });
+
+    return this.client.api.interactions.createAutocompleteResponse(
+      interaction.id,
+      interaction.token,
+      {
+        choices: tags.map((tag) => ({
+          name: tag.name,
+          value: tag.id
+        }))
+      }
+    );
+  }
+}
+```
+
+## Class hierarchy
+
+Understanding the class hierarchy helps you extend functionality:
+
+```
+ExtendedClient (lib/extensions/ExtendedClient.ts)
+  └── PoddyClient (src/client.ts)
+        - Overrides `get functions()` to return PoddyFunctions
+
+Functions (lib/utilities/functions.ts)
+  └── PoddyFunctions (src/utilities/functions.ts)
+        - Custom methods like submitTicket(), uploadAttachmentsToZendesk()
+```
+
+Base classes support generics:
+- `ApplicationCommand` (no generic needed)
+- `Button<PoddyClient>` (use generic for PoddyFunctions access)
+- `Modal<PoddyClient>`
+- `SelectMenu<PoddyClient>`
+- `AutoComplete<PoddyClient>`
+
+## Validation and permissions
+
+All interaction base classes include automatic validation:
+
+```typescript
+export default class AdminCommand extends ApplicationCommand {
+  public constructor(client: ExtendedClient) {
+    super(client, {
+      options: {
+        name: "admin",
+        description: "Admin-only command",
+        type: ApplicationCommandType.ChatInput,
+        default_member_permissions: PermissionFlagsBits.Administrator,
+      },
+      clientPermissions: PermissionFlagsBits.ManageGuild,
+    });
+  }
+
+  // No need to manually check permissions - the base class handles it
+  public override async run({ interaction, language }) {
+    // This only runs if user has Administrator
+    // and bot has ManageGuild permission
+  }
+}
+```
+
+## Language system
+
+All user-facing strings use the language system defined in `languages/en-US.ts`:
+
+```typescript
+// In your command
+content: language.get("PING")
+
+// With interpolation
+content: language.get("PONG", { hostLatency: 42 })
+```
+
+Language strings use `{{variableName}}` for interpolation:
+
+```typescript languages/en-US.ts
+export default {
+  PING: "Pinging...",
+  PONG: "Pong! Latency: {{hostLatency}}ms",
+};
+```
+
+After changing language files, regenerate typings:
+
+```bash
+pnpm translate
+```
+
+<Warning>
+  Never manually edit `typings/language.d.ts` - it's auto-generated by `pnpm translate`.
+</Warning>
+
+## Best practices
+
+<CardGroup cols={2}>
+  <Card title="Use ephemeral responses" icon="eye-slash">
+    For error messages and sensitive data, use ephemeral flags:
+
+    ```typescript
+    flags: MessageFlags.Ephemeral
+    ```
+  </Card>
+
+  <Card title="Handle errors gracefully" icon="circle-exclamation">
+    Always catch and log errors with Sentry:
+
+    ```typescript
+    try {
+      await this.client.api.users.get(userId);
+    } catch (error) {
+      const eventId = await this.client.logger.sentry
+        .captureWithInteraction(error, interaction);
+      // Show error to user
+    }
+    ```
+  </Card>
+
+  <Card title="Defer long operations" icon="clock">
+    If your command takes >3 seconds, defer first:
+
+    ```typescript
+    await this.client.api.interactions.defer(
+      interaction.id,
+      interaction.token
+    );
+    // Long operation
+    await this.client.api.interactions.editReply(...);
+    ```
+  </Card>
+
+  <Card title="Use custom_id metadata" icon="tag">
+    Encode data in custom_id for buttons/modals:
+
+    ```typescript
+    custom_id: `approve.${userId}.${requestId}`
+    ```
+
+    Parse in handler:
+
+    ```typescript
+    const [_, userId, requestId] = custom_id.split(".");
+    ```
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Database operations" icon="database" href="/development/database">
+    Learn how to use Prisma in your commands
+  </Card>
+  <Card title="Environment variables" icon="gear" href="/development/environment">
+    Configure environment-specific behavior
+  </Card>
+</CardGroup>

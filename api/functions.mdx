@@ -1,0 +1,346 @@
+---
+title: Functions
+description: Core utility functions and helpers for the Poddy bot
+---
+
+The Functions classes provide essential utility methods for the Poddy bot. There are two classes:
+
+- **Functions** - Base utility class with core helpers
+- **PoddyFunctions** - Extended class with Poddy-specific features (Zendesk, BetterStack)
+
+## Functions class
+
+The base Functions class provides general-purpose utility methods.
+
+### File operations
+
+#### getFiles
+
+Get all files in a directory, optionally filtered by extension.
+
+<ParamField path="directory" type="string" required>
+  The directory to search
+</ParamField>
+
+<ParamField path="fileExtension" type="string" required>
+  The file extension to filter by (e.g., ".ts", ".js"). Leave empty to get all files
+</ParamField>
+
+<ParamField path="createDirectoryIfNotFound" type="boolean" default="false">
+  Whether to create the directory if it doesn't exist
+</ParamField>
+
+```typescript
+const tsFiles = client.functions.getFiles('./commands', '.ts');
+```
+
+### Time formatting
+
+#### format
+
+Format milliseconds to a human-readable time string.
+
+<ParamField path="milli" type="number" required>
+  The number of milliseconds to format
+</ParamField>
+
+<ParamField path="long" type="boolean" default="true">
+  Whether to use long form ("5 seconds") or short form ("5s")
+</ParamField>
+
+<ParamField path="language" type="Language" default="en-US">
+  The language to use for formatting
+</ParamField>
+
+```typescript
+// Long form
+client.functions.format(5000); // "5 seconds"
+client.functions.format(60000); // "1 minute"
+client.functions.format(3600000); // "1 hour"
+
+// Short form
+client.functions.format(5000, false); // "5s"
+client.functions.format(60000, false); // "1m"
+```
+
+#### generateTimestamp
+
+Generate a Discord timestamp that renders locally for each user.
+
+<ParamField path="options.timestamp" type="Date | number" default="new Date()">
+  The timestamp to format. Can be a Date object or Unix timestamp in milliseconds
+</ParamField>
+
+<ParamField path="options.type" type="string" default="f">
+  The Discord timestamp format type:
+  - `t` - Short time (e.g., 9:41 PM)
+  - `T` - Long time (e.g., 9:41:30 PM)
+  - `d` - Short date (e.g., 03/02/2026)
+  - `D` - Long date (e.g., March 2, 2026)
+  - `f` - Short date/time (e.g., March 2, 2026 9:41 PM)
+  - `F` - Long date/time (e.g., Monday, March 2, 2026 9:41 PM)
+  - `R` - Relative time (e.g., 2 hours ago)
+</ParamField>
+
+```typescript
+// Default (current time, short date/time)
+const now = client.functions.generateTimestamp();
+// Returns: <t:1709419290:f>
+
+// Specific date, relative format
+const future = client.functions.generateTimestamp({
+  timestamp: new Date('2026-12-25'),
+  type: 'R'
+});
+// Returns: <t:1798329600:R> (displays as "in 9 months")
+
+// Static method (no client instance needed)
+const timestamp = Functions.generateTimestamp({
+  timestamp: Date.now(),
+  type: 'D'
+});
+```
+
+### Content upload
+
+#### uploadToHastebin
+
+Upload content to a Hastebin server for sharing long text.
+
+<ParamField path="content" type="string" required>
+  The content to upload
+</ParamField>
+
+<ParamField path="options.server" type="string">
+  The Hastebin server URL. Defaults to the configured server
+</ParamField>
+
+<ParamField path="options.type" type="string" default="md">
+  The file extension for syntax highlighting (e.g., "md", "ts", "json")
+</ParamField>
+
+```typescript
+// Upload error logs
+const url = await client.functions.uploadToHastebin(
+  errorStack,
+  { type: 'txt' }
+);
+
+// Upload JSON data
+const url = await client.functions.uploadToHastebin(
+  JSON.stringify(data, null, 2),
+  { type: 'json' }
+);
+
+// Returns: https://hastebin.com/abc123.md (or null on error)
+```
+
+### Type checking
+
+#### isFunction
+
+Check if a value is a function.
+
+<ParamField path="input" type="any" required>
+  The value to check
+</ParamField>
+
+```typescript
+if (client.functions.isFunction(callback)) {
+  callback();
+}
+```
+
+#### isThenable
+
+Check if a value is a Promise or promise-like object.
+
+<ParamField path="input" type="any" required>
+  The value to check
+</ParamField>
+
+```typescript
+if (client.functions.isThenable(result)) {
+  await result;
+}
+```
+
+### Hashing
+
+#### hash
+
+Hash a string using SHA-256.
+
+<ParamField path="string" type="string" required>
+  The string to hash
+</ParamField>
+
+```typescript
+const hashed = client.functions.hash('my-secret-key');
+// Returns: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+```
+
+## PoddyFunctions class
+
+Extends Functions with Poddy-specific features for Zendesk, BetterStack, and thread management.
+
+### Zendesk integration
+
+#### submitTicket
+
+Create a support ticket in Zendesk from a Discord message or thread.
+
+<ParamField path="type" type="'message' | 'thread'" required>
+  The type of content being escalated
+</ParamField>
+
+<ParamField path="email" type="string | undefined" required>
+  The user's Runpod email address
+</ParamField>
+
+<ParamField path="user" type="APIUser" required>
+  The Discord user escalating the ticket
+</ParamField>
+
+<ParamField path="escalatedId" type="string" required>
+  The ID of the message or thread being escalated
+</ParamField>
+
+<ParamField path="interaction" type="APIModalSubmitGuildInteraction" required>
+  The modal interaction containing the ticket details
+</ParamField>
+
+<ParamField path="ticket" type="SubmittableTicket" required>
+  The ticket data including subject, comment body, and tags
+</ParamField>
+
+```typescript
+const data = await client.functions.submitTicket(
+  'thread',
+  'user@runpod.io',
+  interaction.member.user,
+  threadId,
+  interaction,
+  {
+    subject: 'Support Request from Discord',
+    comment: {
+      html_body: '<p>User needs help with...</p>',
+      uploads: ['token1', 'token2']
+    },
+    tags: ['discord', 'urgent']
+  }
+);
+```
+
+#### uploadAttachmentsToZendesk
+
+Upload Discord attachments to Zendesk and get upload tokens.
+
+<ParamField path="attachments" type="array" required>
+  Array of attachment objects with `url`, `filename`, and optional `content_type`
+</ParamField>
+
+```typescript
+const tokens = await client.functions.uploadAttachmentsToZendesk([
+  {
+    url: 'https://cdn.discord.com/attachments/...',
+    filename: 'screenshot.png',
+    content_type: 'image/png'
+  }
+]);
+// Returns: ['upload_token_1', 'upload_token_2']
+```
+
+#### addTicketInternalNote
+
+Add an internal note to an existing Zendesk ticket.
+
+<ParamField path="ticketId" type="number" required>
+  The Zendesk ticket ID
+</ParamField>
+
+<ParamField path="message" type="object" required>
+  Message object with `author`, `content`, and `attachments`
+</ParamField>
+
+```typescript
+await client.functions.addTicketInternalNote(
+  12345,
+  {
+    author: { username: 'User', id: '123456789' },
+    content: 'Additional context from Discord',
+    attachments: []
+  }
+);
+```
+
+### Thread management
+
+#### fetchAllThreadMessages
+
+Fetch all messages from a Discord thread, handling pagination automatically.
+
+<ParamField path="threadId" type="string" required>
+  The thread channel ID
+</ParamField>
+
+<ParamField path="options.excludeBots" type="boolean" default="false">
+  Whether to exclude messages from bots
+</ParamField>
+
+<ParamField path="options.limit" type="number">
+  Maximum number of messages to fetch
+</ParamField>
+
+<ParamField path="options.sortOrder" type="'chronological' | 'reverse'" default="chronological">
+  Order to return messages in
+</ParamField>
+
+```typescript
+// Get all messages from a support thread
+const messages = await client.functions.fetchAllThreadMessages(
+  threadId,
+  {
+    excludeBots: true,
+    sortOrder: 'chronological'
+  }
+);
+
+// Get last 50 user messages
+const recent = await client.functions.fetchAllThreadMessages(
+  threadId,
+  {
+    excludeBots: true,
+    limit: 50,
+    sortOrder: 'reverse'
+  }
+);
+```
+
+### BetterStack integration
+
+#### updateBetterStackStatusReport
+
+Update incident status messages in Discord from BetterStack uptime monitoring.
+
+<ParamField path="statusReportId" type="string" required>
+  The BetterStack status report ID
+</ParamField>
+
+<ParamField path="indexData" type="BetterStackIndexResponse" required>
+  The full index response from BetterStack's public API
+</ParamField>
+
+```typescript
+// Called automatically by the BetterStack polling system
+await client.functions.updateBetterStackStatusReport(
+  reportId,
+  betterStackData
+);
+```
+
+This method:
+- Finds or creates Discord messages for the incident
+- Updates embed with latest status and timeline
+- Handles status changes (operational, degraded, downtime, etc.)
+- Auto-deletes tracking data for removed messages

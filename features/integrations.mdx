@@ -1,0 +1,487 @@
+---
+title: Integrations
+description: BetterStack incident monitoring, Mastra AI Q&A assistant, and RunPod API account linking
+---
+
+Poddy integrates with external services to provide real-time incident updates, AI-powered question answering, and RunPod account linking.
+
+## BetterStack status monitoring
+
+Poddy monitors RunPod's status page and automatically posts incident updates to configured Discord channels.
+
+### How it works
+
+Poddy polls the BetterStack public API on an interval and creates or updates incident messages:
+
+<Steps>
+  <Step title="Fetch status reports">
+    Poddy retrieves the latest status reports from `uptime.runpod.io`.
+  </Step>
+  
+  <Step title="Parse incidents and updates">
+    Each status report includes multiple status updates (initial, investigating, resolved, etc.).
+  </Step>
+  
+  <Step title="Post or update Discord messages">
+    Poddy checks if an incident message already exists in the database. If so, it updates the existing message; otherwise, it creates a new one.
+  </Step>
+  
+  <Step title="Track message state">
+    Each incident is stored with its message ID, channel ID, and status page ID to prevent duplicates.
+  </Step>
+</Steps>
+
+### Status report update logic
+
+```typescript src/utilities/functions.ts
+public async updateBetterStackStatusReport(statusReportId: string, indexData: BetterStackIndexResponse) {
+  const statusReport = indexData.included.find(
+    (item): item is BetterStackStatusReport => item.type === "status_report" && item.id === statusReportId,
+  );
+
+  if (!statusReport) {
+    this.client.logger.warn(`BetterStack status report ${statusReportId} not found in index data`);
+    return;
+  }
+
+  // Find all status updates for this report
+  const updateIds = new Set(statusReport.relationships.status_updates.data.map((ref) => ref.id));
+  const statusUpdates = indexData.included.filter(
+    (item): item is BetterStackStatusUpdate => item.type === "status_update" && updateIds.has(item.id),
+  );
+
+  if (!statusUpdates.length) {
+    this.client.logger.warn(`BetterStack status report ${statusReportId} has no status updates`);
+    return;
+  }
+
+  // Check if we've already posted this incident
+  const existingStatusReports = await this.client.prisma.betterStackStatusReport.findMany({
+    where: { reportId: statusReport.id },
+  });
+
+  const incidentStatus = statusReport.attributes.aggregate_state;
+
+  // Map status to Discord embed styling
+  const statusDisplay: Record<BetterStackResourceStatus, { text: string; color: number }> = {
+    operational: { text: "Operational", color: this.client.config.colors.success },
+    resolved: { text: "Service Restored", color: this.client.config.colors.success },
+    downtime: { text: "Service Downtime", color: this.client.config.colors.error },
+    degraded: { text: "Service Degradation", color: this.client.config.colors.warning },
+    maintenance: { text: "Planned Maintenance", color: this.client.config.colors.primary },
+  };
+
+  // Build the embed message
+  const toSend = {
+    embeds: [{
+      title: statusReport.attributes.title,
+      url: `https://uptime.runpod.io/incident/${statusReport.id}`,
+      description: statusUpdates
+        .sort((a, b) => new Date(a.attributes.published_at).getTime() - new Date(b.attributes.published_at).getTime())
+        .map((statusUpdate) =>
+          `${this.client.functions.generateTimestamp({
+            timestamp: new Date(statusUpdate.attributes.published_at),
+          })} ${statusUpdate.attributes.message}`.replaceAll(" #", "\n#"),
+        )
+        .join("\n\n"),
+      footer: { text: statusDisplay[incidentStatus].text },
+      color: statusDisplay[incidentStatus].color,
+    }],
+    allowed_mentions: { parse: [] },
+  };
+
+  // Update or create messages in all configured channels
+  const logChannels = await this.client.prisma.logChannel.findMany({
+    where: { event: LogEvent.INCIDENT_CREATED },
+  });
+
+  // Update existing messages
+  const updates = await Promise.all(
+    existingStatusReports.map(async (existingStatusReport) => {
+      const message = await this.client.api.channels
+        .getMessage(existingStatusReport.channelId, existingStatusReport.messageId)
+        .catch(async (error) => {
+          if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownMessage) {
+            // Message was deleted - remove from DB
+            await this.client.prisma.betterStackStatusReport.delete({
+              where: { id: existingStatusReport.id },
+            });
+            return null;
+          }
+          throw error;
+        });
+
+      if (!message) {
+        return { channelId: existingStatusReport.channelId, shouldCreate: true };
+      }
+
+      // Check if message needs updating (compare embed content)
+      if (message.embeds.some((embed, index) => {
+        const toSendEmbed = toSend.embeds?.[index];
+        return (
+          embed.title?.trim() === toSendEmbed?.title?.trim() &&
+          embed.description?.trim() === toSendEmbed?.description?.trim() &&
+          embed.color === toSendEmbed?.color &&
+          embed.footer?.text === toSendEmbed?.footer?.text
+        );
+      })) {
+        return { channelId: existingStatusReport.channelId, shouldCreate: false };
+      }
+
+      // Update the message
+      await this.client.api.channels.editMessage(
+        existingStatusReport.channelId,
+        existingStatusReport.messageId,
+        toSend,
+      );
+
+      return { channelId: existingStatusReport.channelId, shouldCreate: false };
+    }),
+  );
+
+  // Create new messages in channels that don't have this incident yet
+  const logChannelsToSendTo = logChannels.filter(
+    (logChannel) =>
+      updates.some(({ channelId, shouldCreate }) => {
+        return Boolean(channelId === logChannel.channelId && shouldCreate);
+      }) || updates.every(({ channelId }) => channelId !== logChannel.channelId),
+  );
+
+  await Promise.all(
+    logChannelsToSendTo.map(async (logChannel) =>
+      this.client.api.channels
+        .createMessage(logChannel.channelId, toSend)
+        .then(async (message) =>
+          this.client.prisma.betterStackStatusReport.create({
+            data: {
+              reportId: statusReport.id,
+              channelId: logChannel.channelId,
+              guildId: logChannel.guildId,
+              messageId: message.id,
+              startsAt: new Date(statusReport.attributes.starts_at),
+              statusPageId: Number.parseInt(indexData.data.id, 10),
+              endsAt: statusReport.attributes.ends_at ? new Date(statusReport.attributes.ends_at) : null,
+            },
+          }),
+        ),
+    ),
+  );
+}
+```
+
+<Info>
+Poddy automatically updates incident embeds as new status updates are posted, keeping the Discord message in sync with the BetterStack status page.
+</Info>
+
+### Database schema
+
+```prisma prisma/schema.prisma
+enum LogEvent {
+  MESSAGE_EDITED
+  MESSAGE_DELETED
+  // ... other events
+  INCIDENT_CREATED
+}
+
+model BetterStackStatusReport {
+  id           String    @id @default(cuid(2))
+  reportId     String
+  startsAt     DateTime
+  endsAt       DateTime?
+  statusPageId Int
+  messageId    String
+  channelId    String
+  guildId      String
+  lastUpdateAt DateTime  @updatedAt
+
+  @@unique([reportId, channelId])
+  @@map("better_stack_status_reports")
+}
+
+model LogChannel {
+  guildId   String
+  channelId String
+  event     LogEvent
+
+  @@id([channelId, event])
+  @@map("log_channels")
+}
+```
+
+<Accordion title="BetterStack type definitions">
+```typescript src/typings/betterstack.ts
+export type BetterStackResourceStatus =
+  | "operational"
+  | "degraded"
+  | "downtime"
+  | "maintenance"
+  | "resolved";
+
+export interface BetterStackStatusReport {
+  type: "status_report";
+  id: string;
+  attributes: {
+    title: string;
+    starts_at: string;
+    ends_at: string | null;
+    aggregate_state: BetterStackResourceStatus;
+  };
+  relationships: {
+    status_updates: {
+      data: Array<{ type: "status_update"; id: string }>;
+    };
+  };
+}
+
+export interface BetterStackStatusUpdate {
+  type: "status_update";
+  id: string;
+  attributes: {
+    message: string;
+    published_at: string;
+  };
+}
+
+export interface BetterStackIndexResponse {
+  data: {
+    id: string;
+    type: "status_page";
+  };
+  included: Array<BetterStackStatusReport | BetterStackStatusUpdate>;
+}
+```
+</Accordion>
+
+## Mastra AI Q&A
+
+Poddy uses Mastra AI to answer RunPod-related questions when mentioned in allowed channels.
+
+### How the AI works
+
+When Poddy is mentioned in a configured channel:
+
+1. Poddy extracts the user's question from the message
+2. Calls the Mastra API with the question and conversation context
+3. Returns the AI-generated response with sources from RunPod documentation
+
+### Mastra API integration
+
+```typescript src/utilities/mastra.ts
+const MASTRA_AGENT_URL = env.MASTRA_AGENT_URL;
+const MASTRA_ENDPOINT = `${MASTRA_AGENT_URL}/generate`;
+const MASTRA_API_KEY = env.RUNPOD_ASSISTANT_API_KEY;
+
+const DISCORD_SYSTEM_CONTEXT = `You are Poddy, the official Runpod Discord bot helping users in the Runpod community server.
+Your goal is to help users with questions about Runpod services, troubleshooting, and general guidance.
+
+Guidelines:
+- Use Discord-friendly formatting (bold with **text**, code blocks with \`\`\`)
+- Keep responses concise and scannable - Discord users prefer shorter messages
+- Link to relevant documentation when available (https://docs.runpod.io/...)
+- If you're unsure, suggest the user check docs.runpod.io or open a support ticket
+- Be friendly and welcoming to the community
+
+Refund Policy:
+- Runpod distinguishes between "refunds" (money back to payment method) and "credits" (money back to Runpod account)
+- Per Runpod terms of service, credits are non-refundable to payment methods
+- If there's a problem on Runpod's end, support may credit the user's account after review
+- There may be unique exceptions handled with support on a 1:1 basis
+- Offer to help troubleshoot their issue if they provide an error description
+- Suggest they contact Runpod support (help@runpod.io) for billing issues
+
+Support Resources:
+- Documentation: https://docs.runpod.io
+- Support tickets: https://contact.runpod.io/hc/en-us/requests/new
+- Email: help@runpod.io`;
+
+export async function callMastraAPI(
+  question: string,
+  threadId?: string,
+  resourceId?: string
+): Promise<MastraResult> {
+  if (!MASTRA_API_KEY) {
+    return { success: false, error: "" };
+  }
+
+  try {
+    const payload: MastraPayload = {
+      messages: [
+        { role: "system", content: DISCORD_SYSTEM_CONTEXT },
+        { role: "user", content: question },
+      ],
+      source: "discord",
+      // Both threadId and resourceId required for memory
+      ...(threadId && resourceId ? { threadId, resourceId } : {}),
+    };
+
+    const response = await fetch(MASTRA_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${MASTRA_API_KEY}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[Mastra] API error:", response.status, errorText);
+      return {
+        success: false,
+        error: `API request failed: ${response.status}`,
+      };
+    }
+
+    const data: MastraResponse = await response.json();
+
+    return {
+      success: true,
+      text: data.text,
+      ...(data.sources && { sources: data.sources }),
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[Mastra] Error:", message);
+    return {
+      success: false,
+      error: "Failed to get response. Please try again later.",
+    };
+  }
+}
+```
+
+### Conversation memory
+
+Mastra supports conversation memory via `threadId` and `resourceId`:
+
+<Note>
+When both `threadId` (Discord thread/channel ID) and `resourceId` (user ID) are provided, Mastra automatically retrieves the last 4 messages from PostgreSQL to maintain conversation context.
+</Note>
+
+### Response format
+
+```typescript src/utilities/mastra.ts
+interface MastraSource {
+  title: string;
+  url: string;
+  score: number;
+  source: string;
+}
+
+interface MastraResponse {
+  text: string;
+  sources?: MastraSource[];
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+  };
+}
+
+type MastraResult =
+  | { success: true; text: string; sources?: MastraSource[] }
+  | { success: false; error: string };
+```
+
+The bot can display sources alongside the AI response, helping users verify information and explore documentation.
+
+### Allowed channels
+
+Q&A channels are configured per-guild:
+
+```prisma prisma/schema.prisma
+model QAAllowedChannel {
+  channelId String   @id @map("channel_id")
+  guildId   String   @map("guild_id")
+  addedAt   DateTime @default(now()) @map("added_at")
+
+  @@map("qa_allowed_channels")
+}
+```
+
+## RunPod API account linking
+
+Poddy integrates with RunPod's GraphQL API to link Discord users to their RunPod accounts.
+
+### User lookup by Discord ID
+
+```typescript src/utilities/graphql.ts
+export const USER_BY_DISCORD_ID_QUERY = `
+  query UserByDiscordId($input: UserByDiscordIdInput!) {
+    userByDiscordId(input: $input) {
+      email
+    }
+  }
+`;
+
+export interface UserByDiscordIdResult {
+  data?: {
+    userByDiscordId?: {
+      email: string;
+    } | null;
+  };
+}
+
+export async function query<T = unknown>(
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<T> {
+  const response = await fetch(GRAPHQL_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${API_KEY}`,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`GraphQL request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+```
+
+### Use case: Auto-fill email for Zendesk
+
+When escalating to Zendesk, Poddy queries the RunPod API to find the user's email:
+
+```typescript src/bot/buttons/zendesk/escalateToZendesk.ts
+private async lookupRunpodEmail(discordId: string): Promise<{ email: string } | null> {
+  try {
+    const response: UserByDiscordIdResult = await query(USER_BY_DISCORD_ID_QUERY, {
+      input: { discordId },
+    });
+    return response.data?.userByDiscordId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const runpodUser = await this.lookupRunpodEmail(escalatedUserId);
+
+if (runpodUser?.email) {
+  // Auto-fill email and submit ticket
+  await this.processEscalation(type, id, runpodUser.email, staffUserId, interaction);
+  return;
+}
+
+// Otherwise prompt for manual email entry
+return this.client.api.interactions.createModal(/* ... */);
+```
+
+<CardGroup cols={2}>
+  <Card title="BetterStack" icon="chart-line">
+    Real-time incident monitoring from `uptime.runpod.io` with automatic Discord updates.
+  </Card>
+  <Card title="Mastra AI" icon="brain">
+    AI-powered Q&A with conversation memory and documentation sources.
+  </Card>
+  <Card title="RunPod API" icon="link">
+    GraphQL integration for Discord account linking and email lookup.
+  </Card>
+  <Card title="Zendesk" icon="ticket">
+    Support ticket creation with automatic attachment uploads and thread history.
+  </Card>
+</CardGroup>

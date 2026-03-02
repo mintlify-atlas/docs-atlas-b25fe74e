@@ -1,0 +1,250 @@
+---
+title: Logger
+description: Logging and error reporting utility with Sentry integration
+---
+
+The Logger class provides consistent logging across the bot with color-coded console output and Sentry error tracking.
+
+## Usage
+
+The logger is available as a singleton export and also attached to the client:
+
+```typescript
+import Logger from '@lib/classes/Logger.js';
+
+// Use the singleton directly
+Logger.info('Bot starting...');
+Logger.error(error, 'Failed to process command');
+
+// Or use via the client
+client.logger.debug('Debug information');
+```
+
+## Log levels
+
+### debug
+
+Log debug information (magenta background).
+
+<ParamField path="...args" type="any[]" required>
+  Values to log. Objects are inspected with depth 1
+</ParamField>
+
+```typescript
+Logger.debug('Processing interaction:', interaction.id);
+Logger.debug({ userId: '123', action: 'button_click' });
+```
+
+### info
+
+Log informational messages (green background).
+
+<ParamField path="...args" type="any[]" required>
+  Values to log. Objects are inspected with depth 1
+</ParamField>
+
+```typescript
+Logger.info('Command executed successfully');
+Logger.info('Loaded', commands.length, 'commands');
+```
+
+### warn
+
+Log warnings (yellow background).
+
+<ParamField path="...args" type="any[]" required>
+  Values to log. Objects are inspected with depth 1
+</ParamField>
+
+```typescript
+Logger.warn('Rate limit approaching for user:', userId);
+Logger.warn('Deprecated method called');
+```
+
+### error
+
+Log errors (red background).
+
+<ParamField path="error" type="any | null" required>
+  The error object or value to log. Can be null
+</ParamField>
+
+<ParamField path="...args" type="any[]">
+  Additional context to log alongside the error
+</ParamField>
+
+```typescript
+try {
+  await riskyOperation();
+} catch (error) {
+  Logger.error(error, 'Failed to execute operation');
+}
+
+// Log without an error object
+Logger.error(null, 'Something went wrong');
+```
+
+## Timestamp format
+
+All log messages include an automatic timestamp in the format `MM/DD/YYYY @ HH:mm:SS`:
+
+```
+[03/02/2026 @ 14:23:45] Bot started successfully
+```
+
+Access the current timestamp directly:
+
+```typescript
+const timestamp = Logger.timestamp;
+// Returns: "03/02/2026 @ 14:23:45"
+```
+
+## Discord webhook logging
+
+### webhookLog
+
+Send log messages to Discord via webhook.
+
+<ParamField path="type" type="string" required>
+  The webhook type. Looks for an environment variable named `{TYPE}_HOOK`
+</ParamField>
+
+<ParamField path="options" type="RESTPostAPIWebhookWithTokenJSONBody" required>
+  The webhook message payload (embeds, content, etc.)
+</ParamField>
+
+```typescript
+// Send to the webhook defined in ERROR_HOOK env var
+await Logger.webhookLog('error', {
+  embeds: [{
+    title: 'Critical Error',
+    description: 'Database connection failed',
+    color: 0xFF0000,
+    timestamp: new Date().toISOString()
+  }]
+});
+
+// Send to ADMIN_HOOK
+await Logger.webhookLog('admin', {
+  content: 'New user joined with suspicious activity',
+  embeds: [{ 
+    title: 'Alert',
+    fields: [
+      { name: 'User ID', value: userId },
+      { name: 'Account Age', value: '5 minutes' }
+    ]
+  }]
+});
+```
+
+### Environment variables
+
+Define webhook URLs in your environment:
+
+```bash
+ERROR_HOOK=https://discord.com/api/webhooks/...
+ADMIN_HOOK=https://discord.com/api/webhooks/...
+AUDIT_HOOK=https://discord.com/api/webhooks/...
+```
+
+## Sentry integration
+
+The logger includes a Sentry client for error tracking and monitoring.
+
+### captureWithExtras
+
+Capture an error with additional context data.
+
+```typescript
+try {
+  await processPayment(data);
+} catch (error) {
+  const eventId = await Logger.sentry.captureWithExtras(error, {
+    userId: user.id,
+    amount: data.amount,
+    timestamp: Date.now()
+  });
+  
+  // Show event ID to user
+  await interaction.reply({
+    content: `An error occurred. Reference: ${eventId}`
+  });
+}
+```
+
+### Automatic error tracking
+
+Many utility functions automatically report errors to Sentry:
+
+```typescript
+// From Functions.uploadToHastebin
+try {
+  const response = await fetch(hastebinUrl, options);
+  return response.json();
+} catch (error) {
+  Logger.error(error);
+  await Logger.sentry.captureWithExtras(error, {
+    Hastebin: hastebinUrl,
+    Content: content
+  });
+  return null;
+}
+```
+
+## Log output examples
+
+```bash
+# Info log (green)
+[03/02/2026 @ 14:23:45] Bot started successfully
+
+# Debug log (magenta)
+[03/02/2026 @ 14:23:46] { event: 'interactionCreate', type: 2 }
+
+# Warning log (yellow)
+[03/02/2026 @ 14:24:12] Rate limit approaching for user: 123456789
+
+# Error log (red)
+[03/02/2026 @ 14:25:01] Error: Failed to fetch user data
+    at fetchUser (file:///app/src/utils/api.ts:42:11)
+    ...
+```
+
+## Best practices
+
+### Use appropriate log levels
+
+```typescript
+// Debug: Development information
+Logger.debug('Cache hit for key:', cacheKey);
+
+// Info: Normal operations
+Logger.info('Command registered:', command.name);
+
+// Warn: Recoverable issues
+Logger.warn('Retrying failed API call');
+
+// Error: Failures and exceptions
+Logger.error(error, 'Failed to process webhook');
+```
+
+### Include context with errors
+
+```typescript
+// Bad: No context
+Logger.error(error);
+
+// Good: Include what was being done
+Logger.error(error, 'Failed to create Zendesk ticket for thread', threadId);
+```
+
+### Use Sentry for production errors
+
+```typescript
+if (env.NODE_ENV === 'production') {
+  await Logger.sentry.captureWithExtras(error, {
+    operation: 'database_query',
+    query: queryString,
+    params: queryParams
+  });
+}
+```

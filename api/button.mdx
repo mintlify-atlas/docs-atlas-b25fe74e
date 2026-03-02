@@ -1,0 +1,269 @@
+---
+title: Button
+description: Base class for handling Discord button component interactions with permission validation and custom routing
+---
+
+## Overview
+
+`Button` is the base class for all button interaction handlers. It provides:
+
+- Custom ID prefix matching for flexible routing
+- Automatic permission validation
+- Developer-only and owner-only restrictions
+- Pre-check hooks for custom validation
+
+## Constructor
+
+```typescript
+new Button(client, options)
+```
+
+<ParamField path="client" type="ExtendedClient" required>
+  The extended client instance
+</ParamField>
+
+<ParamField path="options" type="object" required>
+  Configuration options for the button handler
+
+  <ParamField path="options.name" type="string" required>
+    The prefix of the custom_id to match. For example, a button with `custom_id="approve.123"` would match a handler with `name="approve"`
+  </ParamField>
+
+  <ParamField path="options.permissions" type="Permissions">
+    Permissions the user needs to interact with this button. Defaults to "0" (none)
+  </ParamField>
+
+  <ParamField path="options.clientPermissions" type="Permissions">
+    Permissions the bot needs to handle this button. Defaults to "0" (none)
+  </ParamField>
+
+  <ParamField path="options.devOnly" type="boolean">
+    Whether this button can only be used by developers. Defaults to false
+  </ParamField>
+
+  <ParamField path="options.ownerOnly" type="boolean">
+    Whether this button can only be used by the guild owner. Defaults to false
+  </ParamField>
+</ParamField>
+
+## Properties
+
+### name
+
+<ResponseField name="name" type="string" required>
+  The custom_id prefix that this handler matches
+</ResponseField>
+
+### permissions
+
+<ResponseField name="permissions" type="Permissions" required>
+  The permissions required for users to use this button
+</ResponseField>
+
+### clientPermissions
+
+<ResponseField name="clientPermissions" type="Permissions" required>
+  The permissions required for the bot to handle this button
+</ResponseField>
+
+### devOnly
+
+<ResponseField name="devOnly" type="boolean" required>
+  Whether this button is restricted to developers
+</ResponseField>
+
+### ownerOnly
+
+<ResponseField name="ownerOnly" type="boolean" required>
+  Whether this button is restricted to guild owners
+</ResponseField>
+
+## Methods
+
+### validate()
+
+Validates the interaction against permissions and restrictions.
+
+```typescript
+const error = await button.validate({ interaction, language, shardId });
+```
+
+<ParamField path="interaction" type="APIMessageComponentButtonInteraction" required>
+  The button interaction to validate
+</ParamField>
+
+<ParamField path="language" type="Language" required>
+  The language instance for error messages
+</ParamField>
+
+<ParamField path="shardId" type="number" required>
+  The shard ID the interaction was received on
+</ParamField>
+
+<ResponseField name="returns" type="Promise<APIEmbed | null>">
+  Returns an error embed if validation fails, or null if validation succeeds
+</ResponseField>
+
+### preCheck()
+
+Custom validation hook that runs after standard validation.
+
+```typescript
+public override async preCheck({ interaction, language, shardId }) {
+  if (!customCondition(interaction)) {
+    return [false, { title: "Error", description: "Custom validation failed" }];
+  }
+  return [true];
+}
+```
+
+<ResponseField name="returns" type="Promise<[boolean, APIEmbed?]>">
+  Returns a tuple: [isValid, errorEmbed?]
+</ResponseField>
+
+### run()
+
+Handles the button interaction. Override this method to implement your button logic.
+
+```typescript
+public override async run({ interaction, language, shardId }) {
+  // Your button handler implementation
+}
+```
+
+## Creating a simple button handler
+
+```typescript src/bot/buttons/roles/addRole.ts
+import Button from "@lib/classes/Button.js";
+import type Language from "@lib/classes/Language.js";
+import type ExtendedClient from "@lib/extensions/ExtendedClient.js";
+import { MessageFlags } from "discord-api-types/v10";
+
+export default class AddRole extends Button {
+  public constructor(client: ExtendedClient) {
+    super(client, {
+      name: "addRole",
+    });
+  }
+
+  public override async run({
+    interaction,
+    language,
+  }: {
+    interaction: APIMessageComponentButtonInteraction;
+    language: Language;
+    shardId: number;
+  }) {
+    // custom_id format: "addRole.{roleId}"
+    const [, roleId] = interaction.data.custom_id.split(".");
+
+    await this.client.api.guilds.addRoleToMember(
+      interaction.guild_id!,
+      interaction.member!.user.id,
+      roleId
+    );
+
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("ROLE_ADDED"),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+}
+```
+
+## Custom ID routing
+
+Button handlers match by checking if `custom_id.startsWith(name)`. This allows you to include metadata in the custom_id:
+
+```typescript src/bot/buttons/tickets/closeTicket.ts
+import Button from "@lib/classes/Button.js";
+import type { PoddyClient } from "@src/client.js";
+
+export default class CloseTicket extends Button<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, {
+      name: "closeTicket",
+    });
+  }
+
+  public override async run({ interaction }) {
+    // custom_id: "closeTicket.{ticketId}.{userId}"
+    const [, ticketId, userId] = interaction.data.custom_id.split(".");
+
+    if (interaction.member!.user.id !== userId) {
+      return this.client.api.interactions.reply(interaction.id, interaction.token, {
+        content: "Only the ticket creator can close this ticket",
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+
+    await this.client.functions.closeTicket(ticketId);
+    
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: "Ticket closed!",
+    });
+  }
+}
+```
+
+## Using with typed client
+
+Extend `Button` with your custom client type to access custom methods:
+
+```typescript src/bot/buttons/zendesk/escalateToZendesk.ts
+import Button from "@lib/classes/Button.js";
+import type { PoddyClient } from "@src/client.js";
+import { PermissionFlagsBits } from "discord-api-types/v10";
+
+export default class EscalateToZendesk extends Button<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, {
+      name: "escalateToZendesk",
+      clientPermissions: String(PermissionFlagsBits.ManageThreads),
+    });
+  }
+
+  public override async run({ interaction, language }) {
+    const [, type, id, userId] = interaction.data.custom_id.split(".");
+
+    // Access PoddyClient-specific functions
+    await this.client.functions.submitTicket(
+      type,
+      email,
+      user,
+      id,
+      interaction
+    );
+
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("TICKET_CREATED"),
+    });
+  }
+}
+```
+
+## Creating the button component
+
+When creating button components, use a custom_id that matches your handler's name:
+
+```typescript
+import { ButtonStyle, ComponentType } from "discord-api-types/v10";
+
+// This button will be handled by the "addRole" handler
+const button = {
+  type: ComponentType.Button,
+  style: ButtonStyle.Primary,
+  custom_id: "addRole.1234567890",
+  label: "Get Role",
+};
+
+await client.api.channels.createMessage(channelId, {
+  content: "Click to get the role!",
+  components: [
+    {
+      type: ComponentType.ActionRow,
+      components: [button],
+    },
+  ],
+});
+```

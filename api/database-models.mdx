@@ -1,0 +1,540 @@
+---
+title: Database models
+description: Guide to using Prisma models with the extended Prisma client
+---
+
+This guide covers how to use Prisma models in Poddy, including client setup, common query patterns, and real examples from the codebase.
+
+## Prisma client setup
+
+Poddy uses an extended Prisma client that adds query logging and performance monitoring. The client is available at `this.client.prisma` in all command handlers, event handlers, and utility classes.
+
+### Client initialization
+
+The extended client is initialized in `lib/extensions/ExtendedClient.ts`:
+
+```typescript
+import { PrismaClient } from "@db/client.js";
+import { PrismaPg } from "@prisma/adapter-pg";
+
+this.prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: env.DATABASE_URL }),
+  log: [
+    { level: "warn", emit: "stdout" },
+    { level: "error", emit: "stdout" },
+    { level: "query", emit: "event" },
+  ],
+}).$extends({
+  query: {
+    $allModels: {
+      async $allOperations({ model, operation, args, query }) {
+        const before = Date.now();
+        const result = await query(args);
+        const after = Date.now();
+
+        Logger.debug(`prisma:query`, `${model}.${operation} took ${String(after - before)}ms`);
+
+        return result;
+      },
+    },
+  },
+});
+```
+
+This setup:
+- Uses the PostgreSQL adapter with connection pooling
+- Logs warnings and errors to stdout
+- Emits query events for debugging
+- Adds performance logging to all database operations
+
+### Importing types
+
+Import Prisma types from the generated client:
+
+```typescript
+import type { Event, Submission, ZendeskTicket, EscalatedType } from "@db/client.js";
+```
+
+## Common query patterns
+
+### Create operations
+
+#### Create a single record
+
+```typescript
+const event = await this.client.prisma.event.create({
+  data: {
+    guildId: interaction.guild_id!,
+    name: "Summer Contest",
+    description: "Submit your best builds!",
+    channelId: channel.id,
+  },
+});
+```
+
+#### Create multiple records
+
+```typescript
+await this.client.prisma.zendeskTicket.createMany({
+  data: [
+    {
+      id: data.ticket.id,
+      escalatedId,
+      escalatedById: user.id,
+      type: type === "message" ? EscalatedType.MESSAGE : EscalatedType.THREAD,
+    },
+  ],
+  skipDuplicates: true,
+});
+```
+
+### Read operations
+
+#### Find unique record
+
+```typescript
+const existingTicket = await this.client.prisma.zendeskTicket.findUnique({
+  where: { escalatedId },
+});
+```
+
+#### Find first matching record
+
+```typescript
+const event = await this.client.prisma.event.findFirst({
+  where: {
+    guildId: interaction.guild_id!,
+    name: { mode: "insensitive", equals: name },
+  },
+});
+```
+
+#### Find many records
+
+```typescript
+const events = await this.client.prisma.event.findMany({
+  where: {
+    guildId: interaction.guild_id!,
+    active: true,
+  },
+  orderBy: { name: "asc" },
+});
+```
+
+#### Find with relations
+
+```typescript
+const submissions = await this.client.prisma.submission.findMany({
+  where: { eventId: event.id },
+  include: { upvotes: true },
+});
+```
+
+### Update operations
+
+#### Update a record
+
+```typescript
+const event = await this.client.prisma.event.update({
+  where: { id: event.id },
+  data: { name, description: description ?? null },
+});
+```
+
+#### Update or create (upsert)
+
+```typescript
+const embed = await this.client.prisma.embed.upsert({
+  where: { id: embed.id },
+  update: { name, data },
+  create: { name, data, guildId: interaction.guild_id! },
+});
+```
+
+#### Upsert with composite key
+
+```typescript
+await this.client.prisma.autoThreadChannel.upsert({
+  where: { channelId },
+  create: {
+    channelId,
+    guildId: interaction.guild_id!,
+    threadName: threadNameOption ?? null,
+  },
+  update: {
+    threadName: threadNameOption ?? null,
+  },
+});
+```
+
+### Delete operations
+
+#### Delete a single record
+
+```typescript
+await this.client.prisma.event.delete({ 
+  where: { id: event.id } 
+});
+```
+
+#### Delete many records
+
+```typescript
+await this.client.prisma.autoThreadChannel.deleteMany({
+  where: { channelId },
+});
+```
+
+## Real-world examples
+
+### Cooldown system
+
+The cooldown system uses composite keys to track command usage:
+
+```typescript
+const cooldownItem = await this.client.prisma.cooldown.findUnique({
+  where: {
+    commandName_commandType_userId: {
+      commandName: this.name,
+      commandType: CommandType.APPLICATION_COMMAND,
+      userId: interaction.user.id,
+    },
+  },
+});
+
+if (cooldownItem && Date.now() < cooldownItem.expiresAt.valueOf()) {
+  // User is on cooldown
+  return {
+    title: language.get("TYPE_ON_COOLDOWN_TITLE"),
+    description: language.get("TYPE_ON_COOLDOWN_DESCRIPTION", {
+      type,
+      formattedTime: this.client.functions.format(
+        cooldownItem.expiresAt.valueOf() - Date.now(), 
+        true, 
+        language
+      ),
+    }),
+  };
+}
+
+// Set new cooldown
+await this.client.prisma.cooldown.upsert({
+  where: {
+    commandName_commandType_userId: {
+      commandName: this.name,
+      commandType: CommandType.APPLICATION_COMMAND,
+      userId: interaction.user.id,
+    },
+  },
+  create: {
+    commandName: this.name,
+    commandType: CommandType.APPLICATION_COMMAND,
+    userId: interaction.user.id,
+    expiresAt: new Date(Date.now() + this.cooldown),
+  },
+  update: {
+    expiresAt: new Date(Date.now() + this.cooldown),
+  },
+});
+```
+
+### Event management
+
+Creating or updating an event with case-insensitive name matching:
+
+```typescript
+let event = await this.client.prisma.event.findFirst({
+  where: {
+    guildId: interaction.guild_id!,
+    name: { mode: "insensitive", equals: name },
+  },
+});
+
+if (event) {
+  event = await this.client.prisma.event.update({
+    where: { id: event.id },
+    data: { name, description: description ?? null },
+  });
+} else {
+  event = await this.client.prisma.event.create({
+    data: {
+      guildId: interaction.guild_id!,
+      name,
+      description: description ?? null,
+      channelId: channel.id,
+    },
+  });
+}
+```
+
+### Log channel configuration
+
+Finding all log channels for a specific event type:
+
+```typescript
+const logChannels = await this.client.prisma.logChannel.findMany({
+  where: {
+    guildId: interaction.guild_id!,
+    event: LogEvent.MESSAGE_DELETED,
+  },
+});
+
+for (const logChannel of logChannels) {
+  await this.client.api.channels.createMessage(logChannel.channelId, {
+    embeds: [/* log embed */],
+  });
+}
+```
+
+### Message caching
+
+Upserting message data for logging:
+
+```typescript
+await this.client.prisma.message.upsert({
+  where: { id: message.id },
+  update: {
+    content: newMessage.content ?? null,
+    editedAt: newMessage.edited_timestamp 
+      ? new Date(newMessage.edited_timestamp) 
+      : null,
+  },
+  create: {
+    id: message.id,
+    authorId: message.author.id,
+    channelId: message.channel_id,
+    guildId: message.guild_id!,
+    content: message.content ?? null,
+    createdAt: new Date(message.timestamp),
+  },
+});
+```
+
+### Zendesk ticket tracking
+
+Checking if a message/thread was already escalated:
+
+```typescript
+const existingTicket = await this.client.prisma.zendeskTicket.findUnique({
+  where: { escalatedId },
+});
+
+if (existingTicket) {
+  return {
+    title: lang.get("TICKET_ALREADY_EXISTS_TITLE"),
+    description: lang.get("TICKET_ALREADY_EXISTS_DESCRIPTION", {
+      ticketId: existingTicket.id,
+    }),
+  };
+}
+
+// Create ticket in Zendesk, then store in database
+await this.client.prisma.zendeskTicket.createMany({
+  data: [{
+    id: zendeskResponse.ticket.id,
+    escalatedId,
+    escalatedById: user.id,
+    type: type === "message" ? EscalatedType.MESSAGE : EscalatedType.THREAD,
+  }],
+  skipDuplicates: true,
+});
+```
+
+### Event submissions with upvotes
+
+Creating a submission:
+
+```typescript
+const submission = await this.client.prisma.submission.findUnique({
+  where: { 
+    userId_eventId: { 
+      userId: interaction.user.id, 
+      eventId: event.id 
+    } 
+  },
+});
+
+if (submission) {
+  return { error: "You already submitted to this event" };
+}
+
+await this.client.prisma.submission.create({
+  data: {
+    userId: interaction.user.id,
+    eventId: event.id,
+    messageId: submissionMessage.id,
+  },
+});
+```
+
+Handling upvotes:
+
+```typescript
+const submission = await this.client.prisma.submission.findUnique({ 
+  where: { messageId: interaction.message.id } 
+});
+
+if (!submission) {
+  return { error: "Submission not found" };
+}
+
+await this.client.prisma.submissionUpvote.upsert({
+  where: {
+    userId_submissionId: {
+      userId: interaction.user.id,
+      submissionId: submission.messageId,
+    },
+  },
+  create: {
+    userId: interaction.user.id,
+    submissionId: submission.messageId,
+    eventId: submission.eventId,
+  },
+  update: {},
+});
+```
+
+## Query filtering
+
+### Case-insensitive string matching
+
+```typescript
+const event = await this.client.prisma.event.findFirst({
+  where: {
+    name: { 
+      mode: "insensitive", 
+      equals: searchName 
+    },
+  },
+});
+```
+
+### Multiple conditions
+
+```typescript
+const events = await this.client.prisma.event.findMany({
+  where: {
+    guildId: interaction.guild_id!,
+    active: true,
+    codeAmount: { not: null },
+  },
+});
+```
+
+### Ordering results
+
+```typescript
+const submissions = await this.client.prisma.submission.findMany({
+  where: { eventId: event.id },
+  orderBy: { userId: "asc" },
+});
+```
+
+## Best practices
+
+### Use transactions for related operations
+
+When creating or updating related records, use transactions to ensure data consistency:
+
+```typescript
+const [event, _] = await this.client.prisma.$transaction([
+  this.client.prisma.event.create({ data: eventData }),
+  this.client.prisma.logChannel.create({ data: logData }),
+]);
+```
+
+### Handle optional fields consistently
+
+Use `?? null` for optional string fields:
+
+```typescript
+await this.client.prisma.event.create({
+  data: {
+    name: required,
+    description: optional ?? null,  // Convert undefined to null
+  },
+});
+```
+
+### Check for existing records before creating
+
+Use `findUnique` or `findFirst` to check for duplicates:
+
+```typescript
+const existing = await this.client.prisma.zendeskTicket.findUnique({
+  where: { escalatedId },
+});
+
+if (existing) {
+  // Handle duplicate
+  return;
+}
+
+// Safe to create
+await this.client.prisma.zendeskTicket.create({ data });
+```
+
+### Use `skipDuplicates` for bulk operations
+
+When creating multiple records, use `skipDuplicates` to avoid errors:
+
+```typescript
+await this.client.prisma.logChannel.createMany({
+  data: channels.map(ch => ({ channelId: ch.id, event, guildId })),
+  skipDuplicates: true,
+});
+```
+
+## Performance tips
+
+### Select only needed fields
+
+Use `select` to reduce data transfer:
+
+```typescript
+const events = await this.client.prisma.event.findMany({
+  where: { guildId },
+  select: { id: true, name: true },
+});
+```
+
+### Use indexes for frequently queried fields
+
+Composite keys and unique constraints automatically create indexes. For example:
+
+```prisma
+@@id([commandName, commandType, userId])  // Creates index
+@@unique([name, guildId])                  // Creates index
+```
+
+### Batch operations when possible
+
+Use `createMany`, `updateMany`, or `deleteMany` instead of loops:
+
+```typescript
+// Good
+await this.client.prisma.logChannel.createMany({
+  data: channels.map(ch => ({ channelId: ch.id, event, guildId })),
+});
+
+// Bad
+for (const channel of channels) {
+  await this.client.prisma.logChannel.create({
+    data: { channelId: channel.id, event, guildId },
+  });
+}
+```
+
+## Debugging queries
+
+The extended client logs all queries with performance metrics. Enable debug logging to see them:
+
+```typescript
+Logger.debug(`prisma:query`, `Event.findFirst took 15ms`);
+```
+
+You can also use Prisma Studio to browse your database:
+
+```bash
+pnpm db:studio
+```

@@ -1,0 +1,204 @@
+---
+title: Development environment setup
+description: Set up your local development environment for Poddy
+---
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+- **Node.js** version 24 (see `.node-version`)
+- **pnpm** version 10.29.3 or higher
+- **Docker** and Docker Compose (for PostgreSQL)
+- **Git** for version control
+
+## Installation steps
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the Poddy repository to your local machine:
+
+    ```bash
+    git clone <repository-url>
+    cd poddy
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all project dependencies using pnpm:
+
+    ```bash
+    pnpm install
+    ```
+
+    This will also run the `prepare` script which:
+    - Sets up Husky git hooks
+    - Generates the Prisma client
+  </Step>
+
+  <Step title="Set up environment variables">
+    Copy the example environment file and configure it for development:
+
+    ```bash
+    cp .env.example .env.dev
+    ```
+
+    See the [Environment configuration](/development/environment) page for details on all available variables.
+  </Step>
+
+  <Step title="Start the database">
+    Start the PostgreSQL database using Docker Compose:
+
+    ```bash
+    pnpm db:start
+    ```
+
+    This will start a PostgreSQL container in the background.
+  </Step>
+
+  <Step title="Run database migrations">
+    Apply the database schema migrations:
+
+    ```bash
+    pnpm db:migrate
+    ```
+
+    See the [Database setup](/development/database) page for more details.
+  </Step>
+
+  <Step title="Build and run the bot">
+    Build the TypeScript code and start the bot in development mode:
+
+    ```bash
+    pnpm build
+    ```
+
+    <Note>
+      Despite the name, `pnpm build` compiles TypeScript **and** runs the bot in development mode. It's not just a build-only command.
+    </Note>
+  </Step>
+</Steps>
+
+## Path aliases
+
+Poddy uses TypeScript path aliases to simplify imports. These are configured in `tsconfig.json`:
+
+| Alias | Maps to | Usage |
+|-------|---------|-------|
+| `@lib/*` | `./lib/*` | Framework layer (base classes, handlers, client) |
+| `@src/*` | `./src/*` | Bot-specific logic |
+| `@db/*` | `./prisma/__generated__/*` | Prisma client |
+| `@lib/typings/language.js` | `./typings/language.d.ts` | Language typings |
+
+### Example usage
+
+```typescript
+import ApplicationCommand from "@lib/classes/ApplicationCommand.js";
+import type { PoddyClient } from "@src/client.js";
+import { PrismaClient } from "@db/client.js";
+```
+
+## Code formatting
+
+Poddy uses **Biome** for code formatting and linting, not ESLint or Prettier.
+
+- **Tab width:** Tabs (not spaces)
+- **Line width:** 120 characters
+- **Import organization:** Handled automatically by Biome
+
+<Warning>
+  Do **not** manually organize imports. Biome handles this automatically through pre-commit hooks.
+</Warning>
+
+### Pre-commit hooks
+
+Husky and lint-staged run automatically on commit:
+
+- Runs Biome checks on staged files
+- Formats Prisma schema files
+- Regenerates language typings if language files changed
+
+## Development workflow
+
+<CodeGroup>
+
+```bash Start development server
+pnpm build
+```
+
+```bash Run production build
+pnpm start
+```
+
+```bash Format code manually
+pnpm biome check --write .
+```
+
+</CodeGroup>
+
+## Environment modes
+
+Poddy supports two environment modes controlled by `NODE_ENV`:
+
+| Mode | File | Command scope | API endpoint | Logging |
+|------|------|---------------|--------------|----------|
+| Development | `.env.dev` | Guild commands | `api.runpod.dev` | Debug |
+| Production | `.env.prod` | Global commands | `api.runpod.io` | Standard |
+
+<Accordion title="What's the difference between guild and global commands?">
+  **Guild commands** are registered only to a specific Discord server (defined by `DEVELOPMENT_GUILD_ID`). They update instantly, making them ideal for development.
+
+  **Global commands** are registered across all servers where the bot is installed. They can take up to an hour to propagate.
+</Accordion>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Database connection errors">
+    Ensure Docker is running and the PostgreSQL container is started:
+
+    ```bash
+    docker ps
+    pnpm db:start
+    ```
+
+    If issues persist, try resetting the database:
+
+    ```bash
+    pnpm db:reset
+    pnpm db:migrate
+    ```
+  </Accordion>
+
+  <Accordion title="TypeScript path alias errors">
+    If imports using `@lib/*`, `@src/*`, or `@db/*` aren't resolving:
+
+    1. Check `tsconfig.json` has the correct `paths` configuration
+    2. Rebuild the project: `rm -rf dist && pnpm build`
+    3. Ensure `tsc-alias` is running (it's part of the build script)
+  </Accordion>
+
+  <Accordion title="Prisma client not found">
+    The Prisma client is auto-generated. If it's missing:
+
+    ```bash
+    npx prisma generate
+    ```
+
+    The generated client is in `prisma/__generated__/` and imported via `@db/*`.
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Database setup" icon="database" href="/development/database">
+    Learn about database management with Prisma
+  </Card>
+  <Card title="Creating commands" icon="code" href="/development/commands">
+    Build slash commands, buttons, and modals
+  </Card>
+  <Card title="Environment variables" icon="gear" href="/development/environment">
+    Configure environment variables
+  </Card>
+</CardGroup>

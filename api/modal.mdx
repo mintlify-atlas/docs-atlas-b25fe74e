@@ -1,0 +1,322 @@
+---
+title: Modal
+description: Base class for handling Discord modal submit interactions with permission validation and input parsing
+---
+
+## Overview
+
+`Modal` is the base class for all modal submit handlers. It provides:
+
+- Custom ID prefix matching for flexible routing
+- Automatic permission validation
+- Developer-only and owner-only restrictions
+- Pre-check hooks for custom validation
+
+## Constructor
+
+```typescript
+new Modal(client, options)
+```
+
+<ParamField path="client" type="ExtendedClient" required>
+  The extended client instance
+</ParamField>
+
+<ParamField path="options" type="object" required>
+  Configuration options for the modal handler
+
+  <ParamField path="options.name" type="string" required>
+    The prefix of the custom_id to match. For example, a modal with `custom_id="feedback.123"` would match a handler with `name="feedback"`
+  </ParamField>
+
+  <ParamField path="options.permissions" type="Permissions">
+    Permissions the user needs to submit this modal. Defaults to "0" (none)
+  </ParamField>
+
+  <ParamField path="options.clientPermissions" type="Permissions">
+    Permissions the bot needs to handle this modal. Defaults to "0" (none)
+  </ParamField>
+
+  <ParamField path="options.devOnly" type="boolean">
+    Whether this modal can only be submitted by developers. Defaults to false
+  </ParamField>
+
+  <ParamField path="options.ownerOnly" type="boolean">
+    Whether this modal can only be submitted by the guild owner. Defaults to false
+  </ParamField>
+</ParamField>
+
+## Properties
+
+### name
+
+<ResponseField name="name" type="string" required>
+  The custom_id prefix that this handler matches
+</ResponseField>
+
+### permissions
+
+<ResponseField name="permissions" type="Permissions" required>
+  The permissions required for users to submit this modal
+</ResponseField>
+
+### clientPermissions
+
+<ResponseField name="clientPermissions" type="Permissions" required>
+  The permissions required for the bot to handle this modal
+</ResponseField>
+
+### devOnly
+
+<ResponseField name="devOnly" type="boolean" required>
+  Whether this modal is restricted to developers
+</ResponseField>
+
+### ownerOnly
+
+<ResponseField name="ownerOnly" type="boolean" required>
+  Whether this modal is restricted to guild owners
+</ResponseField>
+
+## Methods
+
+### validate()
+
+Validates the interaction against permissions and restrictions.
+
+```typescript
+const error = await modal.validate({ interaction, language, shardId });
+```
+
+<ParamField path="interaction" type="APIModalSubmitInteraction" required>
+  The modal submit interaction to validate
+</ParamField>
+
+<ParamField path="language" type="Language" required>
+  The language instance for error messages
+</ParamField>
+
+<ParamField path="shardId" type="number" required>
+  The shard ID the interaction was received on
+</ParamField>
+
+<ResponseField name="returns" type="Promise<APIEmbed | null>">
+  Returns an error embed if validation fails, or null if validation succeeds
+</ResponseField>
+
+### preCheck()
+
+Custom validation hook that runs after standard validation.
+
+```typescript
+public override async preCheck({ interaction, language, shardId }) {
+  if (!customCondition(interaction)) {
+    return [false, { title: "Error", description: "Validation failed" }];
+  }
+  return [true];
+}
+```
+
+<ResponseField name="returns" type="Promise<[boolean, APIEmbed?]>">
+  Returns a tuple: [isValid, errorEmbed?]
+</ResponseField>
+
+### run()
+
+Handles the modal submission. Override this method to implement your modal logic.
+
+```typescript
+public override async run({ interaction, language, shardId }) {
+  // Your modal handler implementation
+}
+```
+
+## Creating a modal handler
+
+```typescript src/bot/modals/feedback/submitFeedback.ts
+import Modal from "@lib/classes/Modal.js";
+import type Language from "@lib/classes/Language.js";
+import type ExtendedClient from "@lib/extensions/ExtendedClient.js";
+import { ComponentType, MessageFlags } from "discord-api-types/v10";
+
+export default class SubmitFeedback extends Modal {
+  public constructor(client: ExtendedClient) {
+    super(client, {
+      name: "submitFeedback",
+    });
+  }
+
+  public override async run({
+    interaction,
+    language,
+  }: {
+    interaction: APIModalSubmitInteraction;
+    language: Language;
+    shardId: number;
+  }) {
+    // Extract input values
+    const feedbackText = interaction.data.components
+      .flatMap(row => row.components)
+      .find(component => 
+        component.type === ComponentType.TextInput && 
+        component.custom_id === "feedback"
+      )?.value;
+
+    await this.client.prisma.feedback.create({
+      data: {
+        userId: interaction.member!.user.id,
+        content: feedbackText,
+      },
+    });
+
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("FEEDBACK_SUBMITTED"),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+}
+```
+
+## Parsing modal inputs
+
+Modal inputs are nested in the `components` array. Here's a helper pattern:
+
+```typescript src/bot/modals/support/createTicket.ts
+import Modal from "@lib/classes/Modal.js";
+import { ComponentType } from "discord-api-types/v10";
+
+export default class CreateTicket extends Modal {
+  public override async run({ interaction, language }) {
+    // Extract all text inputs
+    const inputs = interaction.data.components
+      .filter(row => row.type === ComponentType.ActionRow)
+      .flatMap(row => row.components)
+      .filter(component => component.type === ComponentType.TextInput);
+
+    // Get specific inputs by custom_id
+    const subject = inputs.find(c => c.custom_id === "subject")?.value;
+    const description = inputs.find(c => c.custom_id === "description")?.value;
+    const email = inputs.find(c => c.custom_id === "email")?.value;
+
+    // Use the values
+    await this.client.functions.createSupportTicket({
+      subject,
+      description,
+      email,
+      userId: interaction.member!.user.id,
+    });
+
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("TICKET_CREATED"),
+    });
+  }
+}
+```
+
+## Using with custom_id metadata
+
+```typescript src/bot/modals/tags/editTag.ts
+import Modal from "@lib/classes/Modal.js";
+import type { PoddyClient } from "@src/client.js";
+
+export default class EditTag extends Modal<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, {
+      name: "editTag",
+    });
+  }
+
+  public override async run({ interaction, language }) {
+    // custom_id format: "editTag.{tagId}"
+    const [, tagId] = interaction.data.custom_id.split(".");
+
+    const newContent = interaction.data.components
+      .flatMap(row => row.components)
+      .find(c => c.custom_id === "content")?.value;
+
+    await this.client.prisma.tag.update({
+      where: { id: tagId },
+      data: { content: newContent },
+    });
+
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("TAG_UPDATED"),
+    });
+  }
+}
+```
+
+## Creating a modal component
+
+Modals are created in response to interactions:
+
+```typescript src/bot/buttons/feedback/openFeedbackModal.ts
+import Button from "@lib/classes/Button.js";
+import { ComponentType, TextInputStyle } from "discord-api-types/v10";
+
+export default class OpenFeedbackModal extends Button {
+  public override async run({ interaction, language }) {
+    await this.client.api.interactions.createModal(
+      interaction.id,
+      interaction.token,
+      {
+        title: language.get("FEEDBACK_MODAL_TITLE"),
+        custom_id: "submitFeedback",
+        components: [
+          {
+            type: ComponentType.ActionRow,
+            components: [
+              {
+                type: ComponentType.TextInput,
+                custom_id: "feedback",
+                label: language.get("FEEDBACK_LABEL"),
+                style: TextInputStyle.Paragraph,
+                placeholder: language.get("FEEDBACK_PLACEHOLDER"),
+                required: true,
+                min_length: 10,
+                max_length: 1000,
+              },
+            ],
+          },
+        ],
+      }
+    );
+  }
+}
+```
+
+## Example with Zendesk integration
+
+```typescript src/bot/modals/zendesk/escalateToZendesk.ts
+import Modal from "@lib/classes/Modal.js";
+import type { PoddyClient } from "@src/client.js";
+import { ComponentType, MessageFlags } from "discord-api-types/v10";
+
+export default class EscalateToZendesk extends Modal<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, { name: "escalateToZendesk" });
+  }
+
+  public override async run({ interaction }) {
+    await this.client.api.interactions.defer(interaction.id, interaction.token, {
+      flags: MessageFlags.Ephemeral,
+    });
+
+    const [, type, id, userId] = interaction.data.custom_id.split(".");
+
+    const email = interaction.data.components
+      .flatMap(row => row.components)
+      .find(c => c.custom_id === "email")?.value;
+
+    const user = await this.client.api.users.get(userId);
+
+    await this.client.functions.submitTicket(
+      type,
+      email,
+      user,
+      id,
+      interaction
+    );
+  }
+}
+```

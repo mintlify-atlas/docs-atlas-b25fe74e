@@ -1,0 +1,406 @@
+---
+title: Interaction routing
+description: How interactions are routed and matched using custom_id patterns
+---
+
+Poddy uses different routing strategies for application commands vs component interactions (buttons, modals, select menus).
+
+## Application command routing
+
+Application commands are stored in a Map with a composite key of `${name}-${type}`:
+
+```typescript lib/extensions/ExtendedClient.ts
+public applicationCommands: Map<string, ApplicationCommand>;
+```
+
+### Storage pattern
+
+When loading commands, they're stored with this key:
+
+```typescript lib/classes/ApplicationCommandHandler.ts
+public async loadApplicationCommands() {
+  const baseDir = `${this.client.__dirname}/dist/src/bot/applicationCommands`;
+  for (const parentFolder of this.client.functions.getFiles(baseDir, "", true)) {
+    const parentDir = `${baseDir}/${parentFolder}`;
+    for (const fileName of this.client.functions.getFiles(parentDir, ".js")) {
+      const CommandFile = await import(`${parentDir}/${fileName}`);
+      const command = new CommandFile.default(this.client) as ApplicationCommand;
+      
+      // Store with composite key: name-type
+      this.client.applicationCommands.set(`${command.name}-${command.type}`, command);
+    }
+  }
+}
+```
+
+### Retrieval pattern
+
+```typescript lib/classes/ApplicationCommandHandler.ts
+private getApplicationCommand(name: string, type: number) {
+  return this.client.applicationCommands.get(`${name}-${type}`);
+}
+```
+
+### Command types
+
+<Tabs>
+  <Tab title="ChatInput (1)">
+    Slash commands use type `1`:
+    
+    ```typescript
+    // Command: /help
+    this.client.applicationCommands.get("help-1")
+    ```
+  </Tab>
+  
+  <Tab title="User (2)">
+    User context menus use type `2`:
+    
+    ```typescript
+    // Context menu: "User Info"
+    this.client.applicationCommands.get("User Info-2")
+    ```
+  </Tab>
+  
+  <Tab title="Message (3)">
+    Message context menus use type `3`:
+    
+    ```typescript
+    // Context menu: "Report Message"
+    this.client.applicationCommands.get("Report Message-3")
+    ```
+  </Tab>
+</Tabs>
+
+<Info>
+  The type number comes from Discord's `ApplicationCommandType` enum in `@discordjs/core`.
+</Info>
+
+## Component interaction routing
+
+Buttons, modals, and select menus use a **prefix matching** strategy based on `custom_id`.
+
+### How it works
+
+Component handlers iterate through all loaded components and find the first one where `custom_id.startsWith(component.name)`:
+
+<CodeGroup>
+```typescript lib/classes/ButtonHandler.ts
+private async getButton(customId: string) {
+  return [...this.client.buttons.values()].find((button) => 
+    customId.startsWith(button.name)
+  );
+}
+```
+
+```typescript lib/classes/ModalHandler.ts
+private async getModal(customId: string) {
+  return [...this.client.modals.values()].find((modal) => 
+    customId.startsWith(modal.name)
+  );
+}
+```
+
+```typescript lib/classes/SelectMenuHandler.ts
+private async getSelectMenu(customId: string) {
+  return [...this.client.selectMenus.values()].find((selectMenu) => 
+    customId.startsWith(selectMenu.name)
+  );
+}
+```
+</CodeGroup>
+
+### Why startsWith?
+
+Using `startsWith()` allows handlers to include metadata in the `custom_id` while still routing to the correct handler.
+
+## Custom_id patterns
+
+The `custom_id` can contain metadata separated by dots (`.`). The handler name is the prefix, and everything after can be parsed as data.
+
+### Pattern: `name.data1.data2.data3`
+
+<Tabs>
+  <Tab title="Simple button">
+    **Handler name:** `upvote`
+    
+    **Custom ID:** `upvote`
+    
+    ```typescript src/bot/buttons/events/upvote.ts
+    export default class Upvote extends Button {
+      public constructor(client: ExtendedClient) {
+        super(client, { name: "upvote" });
+      }
+      
+      public override async run({ interaction }) {
+        // No metadata to parse
+        // Just process the upvote
+      }
+    }
+    ```
+    
+    Creates button:
+    ```typescript
+    {
+      type: ComponentType.Button,
+      style: ButtonStyle.Primary,
+      custom_id: "upvote",
+      label: "Upvote"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Button with metadata">
+    **Handler name:** `escalateToZendesk`
+    
+    **Custom ID:** `escalateToZendesk.message.123456789.987654321.111222333`
+    
+    ```typescript src/bot/buttons/zendesk/escalateToZendesk.ts
+    export default class EscalateToZendesk extends Button<PoddyClient> {
+      public constructor(client: PoddyClient) {
+        super(client, { name: "escalateToZendesk" });
+      }
+      
+      public override async run({ interaction }) {
+        // Parse metadata from custom_id
+        const [_, type, id, staffUserId, escalatedUserId] = 
+          interaction.data.custom_id.split(".") as [
+            string,              // "escalateToZendesk"
+            "message" | "thread", // Type of escalation
+            string,              // Message or thread ID
+            string,              // Staff user who created button
+            string,              // User being escalated
+          ];
+        
+        // Use metadata in handler logic
+        if (type === "message") {
+          const message = await this.client.api.channels.getMessage(
+            interaction.channel!.id,
+            id
+          );
+          // Process message escalation
+        } else {
+          const thread = await this.client.api.channels.get(id);
+          // Process thread escalation
+        }
+      }
+    }
+    ```
+    
+    Creates button:
+    ```typescript
+    {
+      type: ComponentType.Button,
+      style: ButtonStyle.Danger,
+      custom_id: `escalateToZendesk.message.${messageId}.${staffId}.${userId}`,
+      label: "Escalate to Zendesk"
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Modal matching button">
+    **Handler name (Button):** `escalateToZendesk`
+    
+    **Handler name (Modal):** `escalateToZendesk`
+    
+    **Custom ID:** `escalateToZendesk.message.123.456.789`
+    
+    The button and modal can share the same `custom_id` pattern:
+    
+    ```typescript src/bot/buttons/zendesk/escalateToZendesk.ts
+    public override async run({ interaction }) {
+      // Button opens modal with same custom_id
+      return this.client.api.interactions.createModal(
+        interaction.id,
+        interaction.token,
+        {
+          title: "Escalate to Zendesk",
+          custom_id: interaction.data.custom_id, // Same ID!
+          components: [/* modal fields */],
+        }
+      );
+    }
+    ```
+    
+    ```typescript src/bot/modals/zendesk/escalateToZendesk.ts
+    public override async run({ interaction }) {
+      // Modal parses same custom_id format
+      const [_, type, id, staffUserId, escalatedUserId] = 
+        interaction.data.custom_id.split(".");
+      
+      // Extract email from modal input
+      const email = interaction.data.components[0]
+        .components[0].value;
+      
+      // Process escalation with email
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Best practices
+
+### 1. Use descriptive handler names
+
+<CodeGroup>
+```typescript Good
+super(client, { name: "escalateToZendesk" });
+super(client, { name: "previewEmbed" });
+super(client, { name: "upvote" });
+```
+
+```typescript Avoid
+super(client, { name: "btn1" });
+super(client, { name: "modal" });
+super(client, { name: "h" });
+```
+</CodeGroup>
+
+### 2. Document your custom_id format
+
+Include a comment explaining the custom_id structure:
+
+```typescript
+export default class EscalateToZendesk extends Button<PoddyClient> {
+  /**
+   * Custom ID format:
+   * escalateToZendesk.{type}.{id}.{staffUserId}.{escalatedUserId}
+   * 
+   * - type: "message" | "thread"
+   * - id: Message ID or thread ID
+   * - staffUserId: User who clicked escalate button
+   * - escalatedUserId: User being escalated
+   */
+  public override async run({ interaction }) {
+    const [_, type, id, staffUserId, escalatedUserId] = 
+      interaction.data.custom_id.split(".");
+    // ...
+  }
+}
+```
+
+### 3. Use dot notation for metadata
+
+Separate metadata with dots (`.`) for easy splitting:
+
+```typescript
+// Good: Easy to parse
+const customId = `addRole.${roleId}.${userId}`;
+const [_, roleId, userId] = customId.split(".");
+
+// Avoid: Harder to parse
+const customId = `addRole-${roleId}_${userId}`;
+const parts = customId.replace("addRole-", "").split("_");
+```
+
+### 4. Type your metadata
+
+Use TypeScript's tuple types for better type safety:
+
+```typescript
+const [_, type, id, staffUserId, escalatedUserId] = 
+  interaction.data.custom_id.split(".") as [
+    string,              // Handler name
+    "message" | "thread",
+    string,
+    string,
+    string,
+  ];
+```
+
+### 5. Validate metadata
+
+Always validate parsed metadata before using it:
+
+```typescript
+public override async run({ interaction }) {
+  const parts = interaction.data.custom_id.split(".");
+  
+  if (parts.length !== 5) {
+    // Handle invalid custom_id format
+    return;
+  }
+  
+  const [_, type, id, staffUserId, escalatedUserId] = parts;
+  
+  if (type !== "message" && type !== "thread") {
+    // Handle invalid type
+    return;
+  }
+  
+  // Continue with validated data
+}
+```
+
+## Limitations
+
+### Custom_id length limit
+
+Discord enforces a **100 character limit** on `custom_id` for components.
+
+<Warning>
+  If your custom_id exceeds 100 characters, the component creation will fail. Consider using a database to store metadata and only include an ID in the custom_id.
+</Warning>
+
+**Solution: Use a lookup ID**
+
+```typescript
+// Instead of:
+const customId = `escalateToZendesk.message.${messageId}.${staffUserId}.${escalatedUserId}.${channelId}.${guildId}`; // Might exceed 100 chars
+
+// Use:
+const metadata = await prisma.buttonMetadata.create({
+  data: {
+    type: "message",
+    messageId,
+    staffUserId,
+    escalatedUserId,
+    channelId,
+    guildId,
+  },
+});
+
+const customId = `escalateToZendesk.${metadata.id}`; // Much shorter
+
+// Then in handler:
+const [_, metadataId] = interaction.data.custom_id.split(".");
+const metadata = await this.client.prisma.buttonMetadata.findUnique({
+  where: { id: metadataId },
+});
+```
+
+### Name collisions
+
+Because routing uses `startsWith()`, shorter names can collide:
+
+```typescript
+// BAD: These will collide!
+super(client, { name: "add" });        // Matches "add", "addRole", "addition"
+super(client, { name: "addRole" });    // Never matches ("add" matched first)
+```
+
+**Solution: Use unique prefixes**
+
+```typescript
+// GOOD: No collisions
+super(client, { name: "calculator_add" });
+super(client, { name: "roles_addRole" });
+```
+
+## Summary
+
+- **Application commands** use `${name}-${type}` as the Map key
+- **Component interactions** use `custom_id.startsWith(handler.name)` matching
+- Custom_id metadata is dot-separated: `name.data1.data2.data3`
+- Always validate and type your metadata
+- Watch out for the 100-character custom_id limit
+- Avoid name collisions with unique prefixes
+
+<CardGroup cols={2}>
+  <Card title="Creating buttons" icon="square" href="/development/commands">
+    Build interactive buttons
+  </Card>
+  <Card title="Creating modals" icon="window" href="/development/commands">
+    Create modal forms
+  </Card>
+</CardGroup>

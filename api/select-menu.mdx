@@ -1,0 +1,375 @@
+---
+title: SelectMenu
+description: Base class for handling Discord select menu component interactions with permission validation and value parsing
+---
+
+## Overview
+
+`SelectMenu` is the base class for all select menu interaction handlers. It provides:
+
+- Custom ID prefix matching for flexible routing
+- Automatic permission validation
+- Developer-only and owner-only restrictions
+- Pre-check hooks for custom validation
+- Access to selected values
+
+## Constructor
+
+```typescript
+new SelectMenu(client, options)
+```
+
+<ParamField path="client" type="ExtendedClient" required>
+  The extended client instance
+</ParamField>
+
+<ParamField path="options" type="object" required>
+  Configuration options for the select menu handler
+
+  <ParamField path="options.name" type="string" required>
+    The prefix of the custom_id to match. For example, a select menu with `custom_id="roleSelect.123"` would match a handler with `name="roleSelect"`
+  </ParamField>
+
+  <ParamField path="options.permissions" type="Permissions">
+    Permissions the user needs to interact with this select menu. Defaults to "0" (none)
+  </ParamField>
+
+  <ParamField path="options.clientPermissions" type="Permissions">
+    Permissions the bot needs to handle this select menu. Defaults to "0" (none)
+  </ParamField>
+
+  <ParamField path="options.devOnly" type="boolean">
+    Whether this select menu can only be used by developers. Defaults to false
+  </ParamField>
+
+  <ParamField path="options.ownerOnly" type="boolean">
+    Whether this select menu can only be used by the guild owner. Defaults to false
+  </ParamField>
+</ParamField>
+
+## Properties
+
+### name
+
+<ResponseField name="name" type="string" required>
+  The custom_id prefix that this handler matches
+</ResponseField>
+
+### permissions
+
+<ResponseField name="permissions" type="Permissions" required>
+  The permissions required for users to use this select menu
+</ResponseField>
+
+### clientPermissions
+
+<ResponseField name="clientPermissions" type="Permissions" required>
+  The permissions required for the bot to handle this select menu
+</ResponseField>
+
+### devOnly
+
+<ResponseField name="devOnly" type="boolean" required>
+  Whether this select menu is restricted to developers
+</ResponseField>
+
+### ownerOnly
+
+<ResponseField name="ownerOnly" type="boolean" required>
+  Whether this select menu is restricted to guild owners
+</ResponseField>
+
+## Methods
+
+### validate()
+
+Validates the interaction against permissions and restrictions.
+
+```typescript
+const error = await selectMenu.validate({ interaction, language, shardId });
+```
+
+<ParamField path="interaction" type="APIMessageComponentSelectMenuInteraction" required>
+  The select menu interaction to validate
+</ParamField>
+
+<ParamField path="language" type="Language" required>
+  The language instance for error messages
+</ParamField>
+
+<ParamField path="shardId" type="number" required>
+  The shard ID the interaction was received on
+</ParamField>
+
+<ResponseField name="returns" type="Promise<APIEmbed | null>">
+  Returns an error embed if validation fails, or null if validation succeeds
+</ResponseField>
+
+### preCheck()
+
+Custom validation hook that runs after standard validation.
+
+```typescript
+public override async preCheck({ interaction, language, shardId }) {
+  if (!customCondition(interaction)) {
+    return [false, { title: "Error", description: "Validation failed" }];
+  }
+  return [true];
+}
+```
+
+<ResponseField name="returns" type="Promise<[boolean, APIEmbed?]>">
+  Returns a tuple: [isValid, errorEmbed?]
+</ResponseField>
+
+### run()
+
+Handles the select menu interaction. Override this method to implement your select menu logic.
+
+```typescript
+public override async run({ interaction, language, shardId }) {
+  // Your select menu handler implementation
+}
+```
+
+## Creating a select menu handler
+
+```typescript src/bot/selectMenus/roles/selectRoles.ts
+import SelectMenu from "@lib/classes/SelectMenu.js";
+import type Language from "@lib/classes/Language.js";
+import type ExtendedClient from "@lib/extensions/ExtendedClient.js";
+import { MessageFlags } from "discord-api-types/v10";
+
+export default class SelectRoles extends SelectMenu {
+  public constructor(client: ExtendedClient) {
+    super(client, {
+      name: "selectRoles",
+    });
+  }
+
+  public override async run({
+    interaction,
+    language,
+  }: {
+    interaction: APIMessageComponentSelectMenuInteraction;
+    language: Language;
+    shardId: number;
+  }) {
+    const selectedRoleIds = interaction.data.values;
+
+    // Add selected roles to the user
+    for (const roleId of selectedRoleIds) {
+      await this.client.api.guilds.addRoleToMember(
+        interaction.guild_id!,
+        interaction.member!.user.id,
+        roleId
+      );
+    }
+
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("ROLES_ADDED", {
+        count: selectedRoleIds.length,
+      }),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+}
+```
+
+## Using custom_id metadata
+
+```typescript src/bot/selectMenus/tickets/assignCategory.ts
+import SelectMenu from "@lib/classes/SelectMenu.js";
+import type { PoddyClient } from "@src/client.js";
+import { PermissionFlagsBits } from "discord-api-types/v10";
+
+export default class AssignCategory extends SelectMenu<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, {
+      name: "assignCategory",
+      permissions: String(PermissionFlagsBits.ManageThreads),
+    });
+  }
+
+  public override async run({ interaction, language }) {
+    // custom_id format: "assignCategory.{ticketId}"
+    const [, ticketId] = interaction.data.custom_id.split(".");
+    const [selectedCategory] = interaction.data.values;
+
+    await this.client.prisma.ticket.update({
+      where: { id: ticketId },
+      data: { category: selectedCategory },
+    });
+
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("CATEGORY_ASSIGNED", {
+        category: selectedCategory,
+      }),
+    });
+  }
+}
+```
+
+## Handling multiple selections
+
+```typescript src/bot/selectMenus/config/selectChannels.ts
+import SelectMenu from "@lib/classes/SelectMenu.js";
+import { MessageFlags } from "discord-api-types/v10";
+
+export default class SelectChannels extends SelectMenu {
+  public override async run({ interaction, language }) {
+    const selectedChannels = interaction.data.values;
+
+    await this.client.prisma.guildConfig.update({
+      where: { guildId: interaction.guild_id! },
+      data: {
+        logChannels: selectedChannels,
+      },
+    });
+
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      embeds: [{
+        title: language.get("CHANNELS_UPDATED_TITLE"),
+        description: language.get("CHANNELS_UPDATED_DESCRIPTION", {
+          channels: selectedChannels.map(id => `<#${id}>`).join(", "),
+        }),
+      }],
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+}
+```
+
+## Creating a string select menu
+
+```typescript src/bot/applicationCommands/config/setup.ts
+import ApplicationCommand from "@lib/classes/ApplicationCommand.js";
+import { ComponentType, SelectMenuDefaultValueType } from "discord-api-types/v10";
+
+export default class Setup extends ApplicationCommand {
+  public override async run({ interaction, language }) {
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("SELECT_CATEGORY"),
+      components: [
+        {
+          type: ComponentType.ActionRow,
+          components: [
+            {
+              type: ComponentType.StringSelect,
+              custom_id: "assignCategory.newTicket",
+              placeholder: language.get("SELECT_CATEGORY_PLACEHOLDER"),
+              options: [
+                {
+                  label: "Technical Support",
+                  value: "technical",
+                  description: "For technical issues",
+                },
+                {
+                  label: "Billing",
+                  value: "billing",
+                  description: "For billing questions",
+                },
+                {
+                  label: "General",
+                  value: "general",
+                  description: "For general inquiries",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  }
+}
+```
+
+## Creating a channel select menu
+
+```typescript
+import { ComponentType } from "discord-api-types/v10";
+
+const channelSelect = {
+  type: ComponentType.ChannelSelect,
+  custom_id: "selectChannels",
+  placeholder: "Select log channels",
+  min_values: 1,
+  max_values: 5,
+  channel_types: [ChannelType.GuildText],
+};
+
+await client.api.interactions.reply(interaction.id, interaction.token, {
+  content: "Configure logging channels:",
+  components: [
+    {
+      type: ComponentType.ActionRow,
+      components: [channelSelect],
+    },
+  ],
+});
+```
+
+## Creating a role select menu
+
+```typescript
+import { ComponentType } from "discord-api-types/v10";
+
+const roleSelect = {
+  type: ComponentType.RoleSelect,
+  custom_id: "selectRoles",
+  placeholder: "Choose your roles",
+  min_values: 1,
+  max_values: 3,
+};
+
+await client.api.channels.createMessage(channelId, {
+  content: "Select up to 3 roles:",
+  components: [
+    {
+      type: ComponentType.ActionRow,
+      components: [roleSelect],
+    },
+  ],
+});
+```
+
+## Example with database persistence
+
+```typescript src/bot/selectMenus/polls/votePoll.ts
+import SelectMenu from "@lib/classes/SelectMenu.js";
+import type { PoddyClient } from "@src/client.js";
+import { MessageFlags } from "discord-api-types/v10";
+
+export default class VotePoll extends SelectMenu<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, { name: "votePoll" });
+  }
+
+  public override async run({ interaction, language }) {
+    const [, pollId] = interaction.data.custom_id.split(".");
+    const selectedOptions = interaction.data.values;
+
+    // Remove previous votes
+    await this.client.prisma.pollVote.deleteMany({
+      where: {
+        pollId,
+        userId: interaction.member!.user.id,
+      },
+    });
+
+    // Record new votes
+    await this.client.prisma.pollVote.createMany({
+      data: selectedOptions.map(option => ({
+        pollId,
+        userId: interaction.member!.user.id,
+        option,
+      })),
+    });
+
+    await this.client.api.interactions.reply(interaction.id, interaction.token, {
+      content: language.get("VOTE_RECORDED"),
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+}
+```

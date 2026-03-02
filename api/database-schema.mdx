@@ -1,0 +1,434 @@
+---
+title: Database schema
+description: Complete Prisma schema reference for all database models, fields, and relations
+---
+
+This page documents the complete database schema for Poddy, including all models, fields, enums, and relations.
+
+## Enums
+
+### CommandType
+
+Defines the type of command that triggered a cooldown.
+
+| Value | Description |
+|-------|-------------|
+| `TEXT_COMMAND` | Legacy text-based commands (prefix commands) |
+| `APPLICATION_COMMAND` | Slash commands and context menu commands |
+
+### EscalatedType
+
+Defines what type of Discord content was escalated to Zendesk.
+
+| Value | Description |
+|-------|-------------|
+| `MESSAGE` | A single Discord message was escalated |
+| `THREAD` | An entire Discord thread was escalated |
+
+### LogEvent
+
+All possible events that can be logged to configured log channels.
+
+| Value | Description |
+|-------|-------------|
+| `MESSAGE_EDITED` | A message was edited |
+| `MESSAGE_DELETED` | A message was deleted |
+| `CHANNEL_CREATED` | A channel was created |
+| `CHANNEL_DELETED` | A channel was deleted |
+| `CHANNEL_UPDATED` | A channel was updated |
+| `ROLE_CREATED` | A role was created |
+| `ROLE_DELETED` | A role was deleted |
+| `ROLE_UPDATED` | A role was updated |
+| `MEMBER_ROLE_UPDATED` | A member's roles were changed |
+| `MEMBER_UPDATED` | A member was updated |
+| `MEMBER_JOINED` | A member joined the server |
+| `MEMBER_LEFT` | A member left the server |
+| `VOICE_STATE_UPDATE` | A member's voice state changed |
+| `THREAD_CREATED` | A thread was created |
+| `THREAD_UPDATED` | A thread was updated |
+| `THREAD_DELETED` | A thread was deleted |
+| `INVITE_CREATED` | An invite was created |
+| `INVITE_DELETED` | An invite was deleted |
+| `INCIDENT_CREATED` | A BetterStack incident was created |
+
+## Models
+
+### Cooldown
+
+Stores command cooldown state for rate limiting.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userId` | String | Discord user ID |
+| `commandName` | String | Name of the command |
+| `expiresAt` | DateTime | When the cooldown expires |
+| `commandType` | CommandType | Type of command (text or application) |
+
+**Composite Primary Key:** `[commandName, commandType, userId]`
+
+**Table Name:** `command_cooldowns`
+
+### UserLanguage
+
+Stores user language preferences.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userId` | String | Discord user ID (Primary Key) |
+| `languageId` | String | Language code (e.g., "en-US") |
+
+**Table Name:** `user_languages`
+
+### AutoThreadChannel
+
+Channels configured to automatically create threads for new messages.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `channelId` | String | Discord channel ID (Primary Key) |
+| `guildId` | String | Discord guild ID |
+| `threadName` | String? | Optional custom thread name pattern |
+
+**Table Name:** `auto_thread_channels`
+
+### AutoTagOnForumChannel
+
+Tags that are automatically applied to new posts in forum channels.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `channelId` | String | Discord channel ID |
+| `guildId` | String | Discord guild ID |
+| `tagId` | String | Discord tag ID |
+
+**Composite Primary Key:** `[channelId, tagId]`
+
+**Table Name:** `auto_tag_on_forum_channels`
+
+### Embed
+
+Stored embed templates that can be reused.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | CUID identifier (Primary Key, auto-generated) |
+| `name` | String | Embed template name |
+| `data` | String | JSON string of embed data |
+| `guildId` | String | Discord guild ID |
+
+**Unique Constraint:** `[name, guildId]`
+
+**Table Name:** `embeds`
+
+### Event
+
+Community events with submissions and code generation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | CUID identifier (Primary Key, auto-generated) |
+| `guildId` | String | Discord guild ID |
+| `channelId` | String | Channel where event is hosted |
+| `name` | String | Event name |
+| `active` | Boolean | Whether event is currently active (default: true) |
+| `description` | String? | Optional event description |
+| `codeAmount` | Int? | Optional number of codes to generate |
+| `codeLogChannelId` | String? | Optional channel for code generation logs |
+
+**Unique Constraint:** `[name, guildId]`
+
+**Relations:**
+- `submissions` - One-to-many with Submission
+- `generatedCodes` - One-to-many with GeneratedCode
+
+### GeneratedCode
+
+Codes generated for event participants.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `code` | String | The generated code (Primary Key) |
+| `eventId` | String | Related event ID |
+| `userId` | String | Discord user ID who received the code |
+| `runpodEmail` | String | User's Runpod email address |
+
+**Unique Constraints:**
+- `[runpodEmail, eventId]`
+- `[userId, eventId]`
+
+**Relations:**
+- `event` - Many-to-one with Event (cascades on delete)
+
+**Table Name:** `generated_codes`
+
+### Submission
+
+User submissions to events.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userId` | String | Discord user ID |
+| `eventId` | String | Related event ID |
+| `messageId` | String | Discord message ID (unique) |
+
+**Composite Primary Key:** `[userId, eventId]`
+
+**Relations:**
+- `event` - Many-to-one with Event (cascades on delete)
+- `upvotes` - One-to-many with SubmissionUpvote
+
+### SubmissionUpvote
+
+Upvotes on event submissions.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userId` | String | Discord user ID who upvoted |
+| `submissionId` | String | Message ID of the submission |
+| `eventId` | String | Related event ID |
+
+**Composite Primary Key:** `[userId, submissionId]`
+
+**Unique Constraint:** `[userId, eventId]` (one upvote per event per user)
+
+**Relations:**
+- `submission` - Many-to-one with Submission (cascades on delete)
+
+### ZendeskTicket
+
+Tracks Discord messages/threads escalated to Zendesk.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | Int | Zendesk ticket ID (Primary Key) |
+| `escalatedId` | String | Discord message or thread ID (unique) |
+| `escalatedById` | String | Discord user ID who escalated |
+| `type` | EscalatedType | Whether a message or thread was escalated |
+
+**Table Name:** `zendesk_tickets`
+
+### LogChannel
+
+Channels configured to receive specific event logs.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `guildId` | String | Discord guild ID |
+| `channelId` | String | Discord channel ID |
+| `event` | LogEvent | Type of event to log |
+
+**Composite Primary Key:** `[channelId, event]`
+
+**Table Name:** `log_channels`
+
+### MemberEvent
+
+Tracks member join events with invite tracking.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | CUID2 identifier (Primary Key, auto-generated) |
+| `inviteCode` | String? | Optional invite code used |
+| `userId` | String | Discord user ID |
+| `guildId` | String | Discord guild ID |
+| `joinedAt` | DateTime | When the member joined |
+| `timestamp` | DateTime | Record creation time (default: now) |
+
+**Table Name:** `member_joins`
+
+### BetterStackStatusReport
+
+Tracks BetterStack incident status messages.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | CUID2 identifier (Primary Key, auto-generated) |
+| `reportId` | String | BetterStack report ID |
+| `startsAt` | DateTime | Incident start time |
+| `endsAt` | DateTime? | Optional incident end time |
+| `statusPageId` | Int | BetterStack status page ID |
+| `messageId` | String | Discord message ID |
+| `channelId` | String | Discord channel ID |
+| `guildId` | String | Discord guild ID |
+| `lastUpdateAt` | DateTime | Last update timestamp (auto-updated) |
+
+**Unique Constraint:** `[reportId, channelId]`
+
+**Table Name:** `better_stack_status_reports`
+
+### Message
+
+Caches message data for logging and moderation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | Discord message ID (Primary Key) |
+| `authorId` | String | Discord user ID of author |
+| `channelId` | String? | Discord channel ID |
+| `guildId` | String | Discord guild ID |
+| `content` | String? | Message content |
+| `createdAt` | DateTime | Message creation timestamp |
+| `editedAt` | DateTime? | Optional last edit timestamp |
+| `deletedAt` | DateTime? | Optional deletion timestamp |
+
+**Table Name:** `messages`
+
+### Channel
+
+Caches channel data.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | Discord channel ID (Primary Key) |
+| `name` | String | Channel name |
+| `type` | Int | Discord channel type |
+| `availableTags` | String[] | Available tags for forum channels |
+| `appliedTags` | String[] | Applied tags |
+
+**Table Name:** `channels`
+
+### AuditLog
+
+Caches audit log entries.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | Audit log entry ID (Primary Key) |
+| `targetId` | String? | Optional target entity ID |
+| `actorId` | String? | Optional actor user ID |
+| `actionType` | String? | Optional action type |
+| `reason` | String? | Optional reason |
+
+**Table Name:** `audit_log`
+
+### Ban
+
+Tracks server bans.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `userId` | String | Banned user ID (Primary Key) |
+| `actorId` | String | User who issued the ban |
+| `createdAt` | DateTime | Ban timestamp |
+| `reason` | String? | Optional ban reason |
+| `deletedAt` | DateTime? | Optional unban timestamp |
+
+**Table Name:** `bans`
+
+### Role
+
+Caches role data.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | Discord role ID (Primary Key) |
+| `name` | String | Role name |
+| `permissions` | String | Serialized permissions |
+| `deleted` | Boolean | Whether role is deleted (default: false) |
+| `editedAt` | DateTime? | Optional last edit timestamp |
+
+**Table Name:** `roles`
+
+### ScheduledEvent
+
+Caches scheduled event data.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | Event ID (Primary Key) |
+| `name` | String | Event name |
+| `description` | String? | Optional event description |
+| `startTime` | DateTime | Event start time |
+| `endTime` | DateTime? | Optional event end time |
+| `entityType` | String | Type of entity |
+| `userCount` | Int? | Optional participant count |
+| `creatorId` | String? | Optional creator user ID |
+| `deletedAt` | DateTime? | Optional deletion timestamp |
+
+**Table Name:** `scheduled_events`
+
+### Invite
+
+Tracks server invites and usage.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `code` | String | Invite code (Primary Key) |
+| `name` | String | Invite name |
+| `description` | String? | Optional description |
+| `channelId` | String? | Optional channel ID |
+| `createdBy` | String | User who created the invite |
+| `guildId` | String | Discord guild ID |
+| `uses` | Int | Number of uses (default: 0) |
+| `createdAt` | DateTime | Creation timestamp (default: now) |
+| `maxAge` | Int? | Optional max age in seconds |
+| `maxUses` | Int? | Optional max uses |
+
+**Table Name:** `invites`
+
+### ThreadEvent
+
+Tracks thread tag changes.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | CUID2 identifier (Primary Key, auto-generated) |
+| `threadId` | String | Discord thread ID |
+| `appliedTags` | String[] | Tags applied to the thread |
+| `timestamp` | DateTime | Event timestamp |
+
+**Table Name:** `thread_events`
+
+### SnowflakeMigrations
+
+Tracks database migration runs.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | CUID2 identifier (Primary Key, auto-generated) |
+| `startedAt` | DateTime | Migration start time |
+| `endedAt` | DateTime? | Optional migration end time |
+| `success` | Boolean | Whether migration succeeded |
+
+### Tag
+
+Stores custom tags (text shortcuts).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | String | Tag ID (Primary Key) |
+| `name` | String | Tag name/trigger |
+| `content` | String | Tag content |
+| `authorId` | String | User who created the tag |
+| `createdAt` | DateTime | Creation timestamp |
+
+### QAAllowedChannel
+
+Channels where AI Q&A is enabled.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `channelId` | String | Discord channel ID (Primary Key) |
+| `guildId` | String | Discord guild ID |
+| `addedAt` | DateTime | When channel was added (default: now) |
+
+**Table Name:** `qa_allowed_channels`
+
+## Database Configuration
+
+The schema uses PostgreSQL as the database provider:
+
+```prisma
+datasource db {
+  provider = "postgresql"
+}
+```
+
+The Prisma client is generated to `prisma/__generated__/`:
+
+```prisma
+generator client {
+  provider = "prisma-client"
+  output   = "./__generated__/"
+}
+```

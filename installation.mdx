@@ -1,0 +1,638 @@
+---
+title: Installation
+description: Complete installation guide for setting up Poddy with all prerequisites and dependencies
+---
+
+## System requirements
+
+<CardGroup cols={2}>
+  <Card title="Operating system" icon="desktop">
+    Linux, macOS, or Windows (with WSL2)
+  </Card>
+  <Card title="RAM" icon="memory">
+    Minimum 2GB, 4GB recommended
+  </Card>
+  <Card title="Disk space" icon="hard-drive">
+    ~500MB for dependencies and database
+  </Card>
+  <Card title="Network" icon="wifi">
+    Stable internet connection for Discord gateway
+  </Card>
+</CardGroup>
+
+## Prerequisites
+
+### Node.js
+
+Poddy requires **Node.js 24** (specified in `.node-version`).
+
+<Tabs>
+  <Tab title="Using nvm (recommended)">
+    Install Node Version Manager and the correct Node.js version:
+    
+    ```bash
+    # Install nvm
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+    
+    # Load nvm
+    source ~/.bashrc  # or ~/.zshrc for zsh
+    
+    # Install and use Node.js 24
+    nvm install 24
+    nvm use 24
+    ```
+    
+    <Note>
+      nvm automatically reads `.node-version` when you enter the project directory.
+    </Note>
+  </Tab>
+  
+  <Tab title="Direct installation">
+    Download and install from [nodejs.org](https://nodejs.org/):
+    
+    ```bash
+    # Verify installation
+    node --version  # Should show v24.x.x
+    ```
+  </Tab>
+  
+  <Tab title="Using package managers">
+    <CodeGroup>
+    ```bash Ubuntu/Debian
+    curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    ```
+    
+    ```bash macOS (Homebrew)
+    brew install node@24
+    ```
+    
+    ```bash Windows (Chocolatey)
+    choco install nodejs --version=24.0.0
+    ```
+    </CodeGroup>
+  </Tab>
+</Tabs>
+
+### pnpm
+
+Poddy uses **pnpm 10.29.3** as its package manager (defined in `packageManager` field).
+
+<Tabs>
+  <Tab title="Using Corepack (recommended)">
+    Corepack comes with Node.js 16.13+ and manages package manager versions automatically:
+    
+    ```bash
+    # Enable Corepack
+    corepack enable
+    
+    # Corepack will automatically install pnpm 10.29.3 when you run pnpm commands
+    ```
+    
+    <Check>
+      This is the recommended approach as it ensures you use the exact version specified in package.json.
+    </Check>
+  </Tab>
+  
+  <Tab title="Direct installation">
+    Install pnpm globally:
+    
+    ```bash
+    npm install -g pnpm@10.29.3
+    
+    # Verify installation
+    pnpm --version  # Should show 10.29.3
+    ```
+  </Tab>
+  
+  <Tab title="Using installation script">
+    ```bash
+    curl -fsSL https://get.pnpm.io/install.sh | sh -
+    
+    # Install specific version
+    pnpm env use --global 10.29.3
+    ```
+  </Tab>
+</Tabs>
+
+### Docker
+
+Docker is required to run PostgreSQL locally.
+
+<Tabs>
+  <Tab title="Linux">
+    ```bash
+    # Install Docker Engine
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+    
+    # Add your user to docker group (optional, avoids sudo)
+    sudo usermod -aG docker $USER
+    newgrp docker
+    
+    # Verify installation
+    docker --version
+    docker compose version
+    ```
+  </Tab>
+  
+  <Tab title="macOS">
+    Download and install [Docker Desktop for Mac](https://docs.docker.com/desktop/install/mac-install/):
+    
+    1. Download the appropriate installer (Intel or Apple Silicon)
+    2. Drag Docker.app to Applications folder
+    3. Open Docker Desktop from Applications
+    4. Verify installation:
+    ```bash
+    docker --version
+    docker compose version
+    ```
+  </Tab>
+  
+  <Tab title="Windows (WSL2)">
+    1. Install [WSL2](https://docs.microsoft.com/en-us/windows/wsl/install)
+    2. Download and install [Docker Desktop for Windows](https://docs.docker.com/desktop/install/windows-install/)
+    3. Enable WSL2 integration in Docker Desktop settings
+    4. Verify in WSL2 terminal:
+    ```bash
+    docker --version
+    docker compose version
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Docker Compose is included with Docker Desktop. On Linux, it may need to be installed separately.
+</Note>
+
+### Git
+
+Install Git to clone the repository:
+
+<CodeGroup>
+```bash Linux
+sudo apt-get install git  # Debian/Ubuntu
+sudo yum install git      # CentOS/RHEL
+```
+
+```bash macOS
+brew install git
+```
+
+```bash Windows
+winget install Git.Git
+```
+</CodeGroup>
+
+## Discord bot setup
+
+<Steps>
+  <Step title="Create a Discord application">
+    1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+    2. Click **New Application**
+    3. Enter a name (e.g., "Poddy Development")
+    4. Click **Create**
+  </Step>
+
+  <Step title="Get your application ID">
+    On the **General Information** page, copy your **Application ID**. You'll need this for `APPLICATION_ID` in `.env.dev`.
+  </Step>
+
+  <Step title="Create the bot user">
+    1. Navigate to the **Bot** section in the left sidebar
+    2. Click **Add Bot** → **Yes, do it!**
+    3. Optionally customize the bot's username and avatar
+  </Step>
+
+  <Step title="Get your bot token">
+    1. In the **Bot** section, click **Reset Token**
+    2. Click **Yes, do it!**
+    3. Copy the token immediately (you'll need this for `DISCORD_TOKEN`)
+    
+    <Warning>
+      Never share your bot token! Treat it like a password. If exposed, reset it immediately in the Developer Portal.
+    </Warning>
+  </Step>
+
+  <Step title="Configure bot permissions">
+    In the **Bot** section, enable these **Privileged Gateway Intents**:
+    
+    - ✅ Presence Intent
+    - ✅ Server Members Intent
+    - ✅ Message Content Intent
+    
+    <Note>
+      These intents are required for Poddy's features like message logging, member tracking, and auto-threading.
+    </Note>
+  </Step>
+
+  <Step title="Invite the bot to your server">
+    1. Go to the **OAuth2** → **URL Generator** section
+    2. Select these scopes:
+       - `bot`
+       - `applications.commands`
+    3. Select bot permissions (or use **Administrator** for development)
+    4. Copy the generated URL and open it in your browser
+    5. Select your development server and authorize
+    
+    <Tip>
+      Use a dedicated test server for development to avoid disrupting production environments.
+    </Tip>
+  </Step>
+
+  <Step title="Get your development guild ID">
+    In Discord:
+    1. Enable Developer Mode: **User Settings** → **Advanced** → **Developer Mode**
+    2. Right-click your development server
+    3. Click **Copy Server ID**
+    4. This is your `DEVELOPMENT_GUILD_ID`
+  </Step>
+</Steps>
+
+## Installation
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/runpod/poddy.git
+    cd poddy
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    pnpm will install all dependencies and automatically run post-install scripts:
+    
+    ```bash
+    pnpm install
+    ```
+    
+    This will:
+    - Install all npm packages from `package.json`
+    - Run `prisma generate` to create the database client
+    - Set up Husky pre-commit hooks
+    
+    <Note>
+      The first install may take a few minutes as it downloads and compiles native dependencies.
+    </Note>
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create your development environment file:
+    
+    ```bash
+    cp .env.example .env.dev
+    ```
+    
+    Edit `.env.dev` with your values:
+    
+    <CodeGroup>
+    ```bash Required variables
+    # Discord credentials (from previous steps)
+    DISCORD_TOKEN="your-bot-token-here"
+    APPLICATION_ID="your-application-id-here"
+    DEVELOPMENT_GUILD_ID="your-test-server-id-here"
+    
+    # Database connection
+    DATABASE_URL="postgresql://poddy:poddy_dev_password@localhost:5432/poddy_dev"
+    
+    # HTTP server port
+    API_PORT=3423
+    ```
+    
+    ```bash Optional variables
+    # Error tracking
+    SENTRY_DSN="https://your-sentry-dsn@sentry.io/project-id"
+    
+    # Metrics
+    DATADOG_API_KEY="your-datadog-api-key"
+    
+    # RunPod API integration
+    RUNPOD_API_KEY="your-runpod-api-key"
+    
+    # Webhooks
+    CHANGELOG_WEBHOOK_SECRET="your-webhook-secret"
+    
+    # AI Q&A (Mastra integration)
+    MASTRA_AGENT_URL="https://runpod-assistant.mastra.cloud/api/agents/runpodGeneralQuestionAgent"
+    RUNPOD_ASSISTANT_API_KEY="your-assistant-api-key"
+    
+    # Data export (S3-compatible storage)
+    EXPORTER_BUCKET_NAME="your-bucket-name"
+    EXPORTER_FILE_PATH="exports/"
+    EXPORTER_ACCESS_KEY="your-s3-access-key"
+    EXPORTER_SECRET_KEY="your-s3-secret-key"
+    ```
+    </CodeGroup>
+    
+    <Warning>
+      The `DATABASE_URL` must match the credentials defined in `docker-compose.yml`:
+      - **User**: `poddy`
+      - **Password**: `poddy_dev_password`
+      - **Database**: `poddy_dev`
+      - **Host**: `localhost`
+      - **Port**: `5432`
+    </Warning>
+  </Step>
+</Steps>
+
+## Database setup
+
+<Steps>
+  <Step title="Start PostgreSQL">
+    Launch the PostgreSQL container using Docker Compose:
+    
+    ```bash
+    pnpm db:start
+    ```
+    
+    This starts a PostgreSQL 16 Alpine container with:
+    - **Container name**: `poddy-postgres`
+    - **Image**: `postgres:16-alpine`
+    - **Port mapping**: `5432:5432`
+    - **Volume**: `postgres_data` for persistence
+    - **Health check**: Every 10 seconds
+    
+    <Tip>
+      The container persists data in a Docker volume, so your data survives container restarts.
+    </Tip>
+  </Step>
+
+  <Step title="Verify PostgreSQL is running">
+    ```bash
+    docker ps | grep poddy-postgres
+    ```
+    
+    You should see output similar to:
+    ```
+    CONTAINER ID   IMAGE                COMMAND                  STATUS
+    abc123def456   postgres:16-alpine   "docker-entrypoint.s…"   Up 2 minutes (healthy)
+    ```
+  </Step>
+
+  <Step title="Run database migrations">
+    Apply all schema migrations to create the database structure:
+    
+    ```bash
+    pnpm db:migrate
+    ```
+    
+    This creates tables for:
+    - **Commands**: Cooldowns tracking
+    - **Users**: Language preferences
+    - **Channels**: Auto-thread and auto-tag configurations
+    - **Content**: Custom embeds and tags
+    - **Events**: Event management, submissions, and upvotes
+    - **Support**: Zendesk ticket tracking
+    - **Logging**: Audit logs, messages, member events
+    - **Incidents**: BetterStack status reports
+    - **Community**: Invites, bans, roles, scheduled events
+    
+    <Note>
+      Migrations are stored in `prisma/migrations/` and are version-controlled.
+    </Note>
+  </Step>
+
+  <Step title="Verify database schema">
+    Optional: Open Prisma Studio to browse the database:
+    
+    ```bash
+    pnpm db:studio
+    ```
+    
+    This opens a web interface at `http://localhost:5555` where you can:
+    - View all tables
+    - Browse records
+    - Edit data manually (useful for testing)
+  </Step>
+</Steps>
+
+## Build and run
+
+<Steps>
+  <Step title="Compile TypeScript">
+    Build the project and start the bot in development mode:
+    
+    ```bash
+    pnpm build
+    ```
+    
+    This command:
+    1. Removes the old `dist/` directory
+    2. Compiles TypeScript using `tsc`
+    3. Resolves path aliases with `tsc-alias`
+    4. Sets `NODE_ENV=development`
+    5. Runs the compiled bot from `dist/src/index.js`
+    
+    <Note>
+      Despite the name, `pnpm build` is **not** just a build step—it also runs the bot!
+    </Note>
+  </Step>
+
+  <Step title="Verify the bot is running">
+    You should see console output similar to:
+    
+    ```bash
+    [INFO] HTTP server started on port 3423
+    [INFO] Connecting to Discord gateway...
+    [INFO] All shards have started.
+    [DEBUG] [SHARD 0] Ready
+    [DEBUG] [SHARD 0] GUILD_CREATE
+    ```
+    
+    In Discord:
+    - The bot should appear **online** in your development server
+    - Slash commands should be registered and available
+    - The bot's custom status should be visible
+  </Step>
+
+  <Step title="Test a command">
+    Try using a slash command in your development server:
+    
+    ```
+    /ping
+    ```
+    
+    The bot should respond with latency information.
+    
+    <Check>
+      If the bot responds, congratulations! Poddy is successfully installed and running.
+    </Check>
+  </Step>
+</Steps>
+
+## Database management
+
+Useful commands for managing the PostgreSQL database:
+
+<CodeGroup>
+```bash Start/Stop
+# Start PostgreSQL container
+pnpm db:start
+
+# Stop PostgreSQL container (keeps data)
+pnpm db:stop
+```
+
+```bash Reset
+# Delete all data and restart fresh
+# Warning: This destroys all database data!
+pnpm db:reset
+```
+
+```bash Migrations
+# Apply schema changes after modifying schema.prisma
+pnpm db:migrate
+
+# Create a new migration without applying it
+npx prisma migrate dev --create-only
+```
+
+```bash Studio
+# Open Prisma Studio (database GUI)
+pnpm db:studio
+```
+
+```bash Direct access
+# Connect to PostgreSQL with psql
+docker exec -it poddy-postgres psql -U poddy -d poddy_dev
+```
+</CodeGroup>
+
+## Updating dependencies
+
+<AccordionGroup>
+  <Accordion title="Update all dependencies">
+    ```bash
+    # Update all packages to their latest allowed versions
+    pnpm update
+    
+    # Or update to latest versions (may break things)
+    pnpm update --latest
+    ```
+  </Accordion>
+  
+  <Accordion title="Update specific package">
+    ```bash
+    pnpm update @discordjs/core
+    ```
+  </Accordion>
+  
+  <Accordion title="Update pnpm itself">
+    ```bash
+    # Using Corepack
+    corepack prepare pnpm@latest --activate
+    
+    # Or update package.json's packageManager field
+    # Then run: corepack install
+    ```
+  </Accordion>
+  
+  <Accordion title="Regenerate Prisma client after Prisma updates">
+    If you update `@prisma/client` or `prisma`:
+    
+    ```bash
+    npx prisma generate
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="pnpm: command not found">
+    **Cause**: pnpm is not installed or not in PATH.
+    
+    **Solutions**:
+    1. Enable Corepack: `corepack enable`
+    2. Or install pnpm globally: `npm install -g pnpm@10.29.3`
+    3. Reload your shell: `source ~/.bashrc` or `source ~/.zshrc`
+  </Accordion>
+  
+  <Accordion title="Docker daemon not running">
+    **Error**: `Cannot connect to the Docker daemon`
+    
+    **Solutions**:
+    - **Linux**: `sudo systemctl start docker`
+    - **macOS/Windows**: Open Docker Desktop application
+  </Accordion>
+  
+  <Accordion title="Port 5432 already in use">
+    **Cause**: Another PostgreSQL instance is running.
+    
+    **Solutions**:
+    1. Stop the existing PostgreSQL service:
+       ```bash
+       # Linux
+       sudo systemctl stop postgresql
+       
+       # macOS
+       brew services stop postgresql
+       ```
+    2. Or change the port in `docker-compose.yml` and update `DATABASE_URL`
+  </Accordion>
+  
+  <Accordion title="Prisma client not generating">
+    **Error**: `Cannot find module '@db/client'`
+    
+    **Solution**: Manually generate the Prisma client:
+    ```bash
+    npx prisma generate
+    ```
+  </Accordion>
+  
+  <Accordion title="TypeScript compilation errors">
+    **Error**: Various TypeScript errors during `pnpm build`
+    
+    **Solutions**:
+    1. Ensure you're using Node.js 24: `node --version`
+    2. Clear and reinstall dependencies:
+       ```bash
+       rm -rf node_modules pnpm-lock.yaml
+       pnpm install
+       ```
+    3. Regenerate language typings: `pnpm translate`
+  </Accordion>
+  
+  <Accordion title="Bot won't connect to Discord">
+    **Error**: `401: Unauthorized` or connection timeouts
+    
+    **Solutions**:
+    1. Verify `DISCORD_TOKEN` is correct in `.env.dev`
+    2. Check that the bot token hasn't been reset in the Developer Portal
+    3. Ensure the `APPLICATION_ID` matches the bot's application
+    4. Verify your network allows WebSocket connections to Discord
+  </Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart guide"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Condensed version of this guide for faster setup
+  </Card>
+  <Card
+    title="Development guide"
+    icon="code"
+    href="/development/setup"
+  >
+    Learn how to develop and contribute to Poddy
+  </Card>
+  <Card
+    title="Configuration"
+    icon="gear"
+    href="/development/environment"
+  >
+    Configure integrations and advanced settings
+  </Card>
+  <Card
+    title="Architecture"
+    icon="diagram-project"
+    href="/architecture/overview"
+  >
+    Understand Poddy's codebase structure
+  </Card>
+</CardGroup>

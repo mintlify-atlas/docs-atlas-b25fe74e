@@ -1,0 +1,281 @@
+---
+title: EventHandler
+description: Base class for handling Discord gateway events with automatic error handling and metrics tracking
+---
+
+## Overview
+
+`EventHandler` is the base class for all Discord gateway event handlers. It provides:
+
+- Automatic error handling and Sentry reporting
+- DataDog metrics tracking for event counts
+- Support for one-time event listeners
+- Type-safe event handling with Discord.js types
+
+## Constructor
+
+```typescript
+new EventHandler(client, name, once)
+```
+
+<ParamField path="client" type="ExtendedClient" required>
+  The extended client instance
+</ParamField>
+
+<ParamField path="name" type="keyof MappedEvents" required>
+  The name of the Discord gateway event to listen to (e.g., `GatewayDispatchEvents.MessageCreate`)
+</ParamField>
+
+<ParamField path="once" type="boolean">
+  Whether this event should only be handled once. Defaults to false
+</ParamField>
+
+## Properties
+
+### name
+
+<ResponseField name="name" type="keyof MappedEvents" required>
+  The Discord gateway event name this handler listens to
+</ResponseField>
+
+### client
+
+<ResponseField name="client" type="ExtendedClient" required>
+  The extended client instance
+</ResponseField>
+
+## Methods
+
+### run()
+
+Handles the event execution. Override this method to implement your event logic.
+
+```typescript
+public override async run(...args: any) {
+  // Your event handler implementation
+}
+```
+
+<ParamField path="args" type="any[]" required>
+  The arguments passed by the Discord gateway event
+</ParamField>
+
+### listen()
+
+Starts listening for the event. This is called automatically by the framework.
+
+```typescript
+eventHandler.listen();
+```
+
+### removeListener()
+
+Stops listening for the event.
+
+```typescript
+eventHandler.removeListener();
+```
+
+## Creating a message event handler
+
+```typescript src/bot/events/messageCreate.ts
+import EventHandler from "@lib/classes/EventHandler.js";
+import type ExtendedClient from "@lib/extensions/ExtendedClient.js";
+import type { ToEventProps } from "@discordjs/core";
+import { GatewayDispatchEvents, type GatewayMessageCreateDispatchData } from "discord-api-types/v10";
+
+export default class MessageCreate extends EventHandler {
+  public constructor(client: ExtendedClient) {
+    super(client, GatewayDispatchEvents.MessageCreate);
+  }
+
+  public override async run({
+    data,
+    shardId,
+  }: ToEventProps<GatewayMessageCreateDispatchData>) {
+    // Ignore bot messages
+    if (data.author.bot) return;
+
+    this.client.logger.info(
+      `Message from ${data.author.username} in guild ${data.guild_id}: ${data.content}`
+    );
+
+    // Your message handling logic
+  }
+}
+```
+
+## Creating a ready event handler
+
+```typescript src/bot/events/ready.ts
+import EventHandler from "@lib/classes/EventHandler.js";
+import type { PoddyClient } from "@src/client.js";
+import type { ToEventProps } from "@discordjs/core";
+import { GatewayDispatchEvents, type GatewayReadyDispatchData } from "discord-api-types/v10";
+
+export default class Ready extends EventHandler<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    // Third parameter is true, so this only runs once
+    super(client, GatewayDispatchEvents.Ready, true);
+  }
+
+  public override async run({ data, shardId }: ToEventProps<GatewayReadyDispatchData>) {
+    this.client.logger.info(
+      `Logged in as ${data.user.username} on shard ${shardId} with ${data.guilds.length} guilds`
+    );
+
+    // Cache guild owners
+    await Promise.all(
+      data.guilds.map(async (guild) => {
+        const fullGuild = await this.client.api.guilds.get(guild.id);
+        this.client.guildOwnersCache.set(guild.id, fullGuild.owner_id);
+      })
+    );
+  }
+}
+```
+
+## Using with typed client
+
+```typescript src/bot/events/guildMemberAdd.ts
+import EventHandler from "@lib/classes/EventHandler.js";
+import type { PoddyClient } from "@src/client.js";
+import type { ToEventProps } from "@discordjs/core";
+import { GatewayDispatchEvents, type GatewayGuildMemberAddDispatchData } from "discord-api-types/v10";
+
+export default class GuildMemberAdd extends EventHandler<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, GatewayDispatchEvents.GuildMemberAdd);
+  }
+
+  public override async run({
+    data,
+    shardId,
+  }: ToEventProps<GatewayGuildMemberAddDispatchData>) {
+    // Access PoddyClient-specific methods
+    const welcomeMessage = await this.client.functions.generateWelcomeMessage(
+      data.user,
+      data.guild_id
+    );
+
+    const config = await this.client.prisma.guildConfig.findUnique({
+      where: { guildId: data.guild_id },
+    });
+
+    if (config?.welcomeChannelId) {
+      await this.client.api.channels.createMessage(config.welcomeChannelId, {
+        content: welcomeMessage,
+      });
+    }
+  }
+}
+```
+
+## Error handling
+
+Errors thrown in event handlers are automatically caught and reported to Sentry:
+
+```typescript src/bot/events/messageDelete.ts
+import EventHandler from "@lib/classes/EventHandler.js";
+import { GatewayDispatchEvents } from "discord-api-types/v10";
+
+export default class MessageDelete extends EventHandler {
+  public override async run({ data }) {
+    // If this throws an error, it will be:
+    // 1. Logged via this.client.logger.error()
+    // 2. Reported to Sentry with event context
+    // 3. The bot will continue running
+
+    const channel = await this.client.api.channels.get(data.channel_id);
+    
+    // Your logic here
+  }
+}
+```
+
+## Available gateway events
+
+Common gateway events you can handle:
+
+- `GatewayDispatchEvents.Ready` - Bot is ready
+- `GatewayDispatchEvents.MessageCreate` - New message
+- `GatewayDispatchEvents.MessageUpdate` - Message edited
+- `GatewayDispatchEvents.MessageDelete` - Message deleted
+- `GatewayDispatchEvents.GuildCreate` - Bot joins a guild
+- `GatewayDispatchEvents.GuildDelete` - Bot leaves a guild
+- `GatewayDispatchEvents.GuildMemberAdd` - Member joins
+- `GatewayDispatchEvents.GuildMemberRemove` - Member leaves
+- `GatewayDispatchEvents.GuildMemberUpdate` - Member updated
+- `GatewayDispatchEvents.InteractionCreate` - Interaction received
+- `GatewayDispatchEvents.VoiceStateUpdate` - Voice state changes
+
+## Example: Voice tracking
+
+```typescript src/bot/events/voiceStateUpdate.ts
+import EventHandler from "@lib/classes/EventHandler.js";
+import type { PoddyClient } from "@src/client.js";
+import type { ToEventProps } from "@discordjs/core";
+import { GatewayDispatchEvents, type GatewayVoiceStateUpdateDispatchData } from "discord-api-types/v10";
+
+export default class VoiceStateUpdate extends EventHandler<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, GatewayDispatchEvents.VoiceStateUpdate);
+  }
+
+  public override async run({
+    data,
+  }: ToEventProps<GatewayVoiceStateUpdateDispatchData>) {
+    if (!data.guild_id) return;
+
+    const usersInVoice = this.client.usersInVoice.get(data.guild_id) ?? new Set();
+
+    if (data.channel_id) {
+      // User joined a voice channel
+      usersInVoice.add(data.user_id);
+    } else {
+      // User left voice
+      usersInVoice.delete(data.user_id);
+    }
+
+    this.client.usersInVoice.set(data.guild_id, usersInVoice);
+
+    this.client.logger.debug(
+      `Voice state update: ${usersInVoice.size} users in voice in guild ${data.guild_id}`
+    );
+  }
+}
+```
+
+## Example: Thread management
+
+```typescript src/bot/events/threadCreate.ts
+import EventHandler from "@lib/classes/EventHandler.js";
+import type { PoddyClient } from "@src/client.js";
+import { GatewayDispatchEvents, type GatewayThreadCreateDispatchData } from "discord-api-types/v10";
+
+export default class ThreadCreate extends EventHandler<PoddyClient> {
+  public constructor(client: PoddyClient) {
+    super(client, GatewayDispatchEvents.ThreadCreate);
+  }
+
+  public override async run({ data }: ToEventProps<GatewayThreadCreateDispatchData>) {
+    // Auto-join threads
+    await this.client.api.channels.joinThread(data.id);
+
+    // Log thread creation
+    await this.client.prisma.thread.create({
+      data: {
+        id: data.id,
+        name: data.name,
+        guildId: data.guild_id,
+        parentId: data.parent_id,
+        ownerId: data.owner_id,
+      },
+    });
+
+    this.client.logger.info(
+      `Joined thread ${data.name} (${data.id}) in guild ${data.guild_id}`
+    );
+  }
+}
+```

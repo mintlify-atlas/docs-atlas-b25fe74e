@@ -1,0 +1,366 @@
+---
+title: Environment configuration
+description: Configure environment variables for development and production
+---
+
+## Overview
+
+Poddy uses environment files to configure behavior in different environments. The active environment is controlled by the `NODE_ENV` variable.
+
+## Environment files
+
+Two environment files control dev vs prod behavior:
+
+| File | Environment | Command scope | API endpoint | When loaded |
+|------|-------------|---------------|--------------|-------------|
+| `.env.dev` | Development | Guild commands | `api.runpod.dev` | `NODE_ENV=development` |
+| `.env.prod` | Production | Global commands | `api.runpod.io` | `NODE_ENV=production` |
+
+<Note>
+  See `.env.example` for a complete list of required and optional variables.
+</Note>
+
+## Required variables
+
+These variables must be set in both `.env.dev` and `.env.prod`:
+
+### Discord configuration
+
+```bash
+# Discord bot token from https://discord.com/developers/applications
+DISCORD_TOKEN="your-bot-token-here"
+
+# Your application ID (also called client ID)
+APPLICATION_ID="123456789012345678"
+
+# Guild ID for development-only commands (only needed in .env.dev)
+DEVELOPMENT_GUILD_ID="123456789012345678"
+```
+
+<Accordion title="Where do I find these values?">
+  1. Go to the [Discord Developer Portal](https://discord.com/developers/applications)
+  2. Select your application
+  3. **DISCORD_TOKEN**: Bot tab → Token (click "Reset Token" if you don't have it)
+  4. **APPLICATION_ID**: General Information → Application ID
+  5. **DEVELOPMENT_GUILD_ID**: Right-click your Discord server → Copy Server ID (enable Developer Mode first)
+</Accordion>
+
+### Database
+
+```bash
+# PostgreSQL connection string
+DATABASE_URL="postgresql://user:password@localhost:5432/poddy"
+```
+
+For local development with Docker:
+
+```bash
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/poddy"
+```
+
+### Monitoring and error tracking
+
+```bash
+# Sentry DSN for error tracking
+SENTRY_DSN="https://abc123@o123456.ingest.sentry.io/7654321"
+
+# Datadog API key for metrics (optional)
+DATADATA_API_KEY="your-datadog-api-key"
+```
+
+### API keys
+
+```bash
+# RunPod API key for account linking
+RUNPOD_API_KEY="your-runpod-api-key"
+```
+
+## Optional variables
+
+### HTTP server
+
+```bash
+# Port for the Hono HTTP server (default: 3423)
+API_PORT=3423
+```
+
+The HTTP server runs alongside the bot and listens on this port.
+
+### Webhook integration
+
+```bash
+# Secret for validating changelog webhook requests
+CHANGELOG_WEBHOOK_SECRET="your-webhook-secret"
+```
+
+### Data exporter (AWS S3)
+
+```bash
+# S3 bucket configuration for data exports
+EXPORTER_BUCKET_NAME="poddy-exports"
+EXPORTER_FILE_PATH="exports/"
+EXPORTER_ACCESS_KEY="your-aws-access-key"
+EXPORTER_SECRET_KEY="your-aws-secret-key"
+```
+
+### Mastra AI assistant
+
+```bash
+# Mastra agent URL for RunPod Q&A
+MASTRA_AGENT_URL="https://runpod-assistant.mastra.cloud/api/agents/runpodGeneralQuestionAgent"
+
+# API key for Mastra (generate using: node scripts/generate-api-key.js)
+RUNPOD_ASSISTANT_API_KEY="your-mastra-api-key"
+```
+
+<Accordion title="What is Mastra?">
+  Mastra powers the AI-assisted Q&A feature. When users mention the bot in allowed channels, it queries the Mastra agent to provide answers based on RunPod documentation.
+
+  See `src/utilities/mastra.ts` for implementation details.
+</Accordion>
+
+## Setting up environment files
+
+<Steps>
+  <Step title="Copy the example file">
+    Start by copying `.env.example`:
+
+    ```bash
+    cp .env.example .env.dev
+    ```
+
+    For production:
+
+    ```bash
+    cp .env.example .env.prod
+    ```
+  </Step>
+
+  <Step title="Fill in required values">
+    Edit `.env.dev` and fill in all required variables:
+
+    ```bash
+    DISCORD_TOKEN="..."
+    APPLICATION_ID="..."
+    DEVELOPMENT_GUILD_ID="..."
+    DATABASE_URL="postgresql://postgres:postgres@localhost:5432/poddy"
+    SENTRY_DSN="..."
+    RUNPOD_API_KEY="..."
+    ```
+  </Step>
+
+  <Step title="Set NODE_ENV">
+    The bot automatically uses `NODE_ENV` to determine which file to load:
+
+    ```bash Development
+    NODE_ENV=development pnpm build
+    ```
+
+    ```bash Production
+    NODE_ENV=production pnpm start
+    ```
+  </Step>
+</Steps>
+
+## Environment-specific behavior
+
+### Command registration
+
+| Environment | Scope | Speed | Use case |
+|-------------|-------|-------|----------|
+| Development | Guild | Instant | Testing new commands |
+| Production | Global | Up to 1 hour | Live bot |
+
+Development mode registers commands only to the guild specified in `DEVELOPMENT_GUILD_ID`, so they appear instantly.
+
+Production mode registers commands globally across all servers, but Discord can take up to an hour to propagate them.
+
+### API endpoints
+
+The bot uses different RunPod API endpoints based on environment:
+
+- **Development**: `api.runpod.dev`
+- **Production**: `api.runpod.io`
+
+### Logging
+
+Development mode enables debug logging, while production uses standard log levels.
+
+## Loading environment variables
+
+Poddy uses `dotenv-extended` to load environment variables:
+
+```typescript
+import dotenv from "dotenv-extended";
+
+dotenv.load({
+  path: process.env.NODE_ENV === "production" ? ".env.prod" : ".env.dev",
+  defaults: ".env.example",
+});
+```
+
+## Accessing environment variables
+
+Environment variables are typed in `typings/env.d.ts`:
+
+```typescript
+declare global {
+  namespace NodeJS {
+    interface ProcessEnv {
+      DISCORD_TOKEN: string;
+      APPLICATION_ID: string;
+      DATABASE_URL: string;
+      SENTRY_DSN: string;
+      RUNPOD_API_KEY: string;
+      DEVELOPMENT_GUILD_ID?: string;
+      API_PORT?: string;
+      // ...
+    }
+  }
+}
+```
+
+Access them via `process.env`:
+
+```typescript
+import { env } from "node:process";
+
+const token = env.DISCORD_TOKEN;
+const apiPort = env.API_PORT || 3423;
+```
+
+## Security best practices
+
+<CardGroup cols={2}>
+  <Card title="Never commit .env files" icon="ban">
+    Add all `.env*` files to `.gitignore` (except `.env.example`):
+
+    ```gitignore
+    .env
+    .env.dev
+    .env.prod
+    .env.local
+    ```
+  </Card>
+
+  <Card title="Use .env.example" icon="file">
+    Keep `.env.example` updated with all required variables (but no real values):
+
+    ```bash
+    DISCORD_TOKEN=""
+    APPLICATION_ID=""
+    # etc.
+    ```
+  </Card>
+
+  <Card title="Rotate compromised tokens" icon="rotate">
+    If a token is leaked:
+
+    1. Immediately regenerate it in the Discord Developer Portal
+    2. Update your `.env.dev` and `.env.prod` files
+    3. Restart the bot
+  </Card>
+
+  <Card title="Restrict access" icon="lock">
+    Only share environment files with team members who need them. Use a secure method like 1Password or similar.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Bot can't find environment variables">
+    Ensure you're running with the correct `NODE_ENV`:
+
+    ```bash
+    NODE_ENV=development pnpm build
+    ```
+
+    Check that the corresponding `.env.dev` or `.env.prod` file exists.
+  </Accordion>
+
+  <Accordion title="Commands not appearing in Discord">
+    **In development**: Ensure `DEVELOPMENT_GUILD_ID` is set and `NODE_ENV=development`.
+
+    **In production**: Global commands can take up to 1 hour to appear. Check:
+
+    ```bash
+    NODE_ENV=production pnpm start
+    ```
+  </Accordion>
+
+  <Accordion title="Database connection errors">
+    Verify your `DATABASE_URL` is correct:
+
+    ```bash
+    # For local Docker PostgreSQL
+    DATABASE_URL="postgresql://postgres:postgres@localhost:5432/poddy"
+    ```
+
+    Ensure the database is running:
+
+    ```bash
+    pnpm db:start
+    ```
+  </Accordion>
+
+  <Accordion title="TypeScript can't find process.env types">
+    Check that `typings/env.d.ts` is included in your `tsconfig.json`:
+
+    ```json
+    {
+      "include": ["src", "lib", "typings"]
+    }
+    ```
+
+    Restart your TypeScript server.
+  </Accordion>
+</AccordionGroup>
+
+## Example .env.dev
+
+Here's a complete example for local development:
+
+```bash .env.dev
+# Discord
+DISCORD_TOKEN="your-bot-token-here"
+APPLICATION_ID="123456789012345678"
+DEVELOPMENT_GUILD_ID="123456789012345678"
+
+# Database
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/poddy"
+
+# Monitoring
+SENTRY_DSN="https://abc123@o123456.ingest.sentry.io/7654321"
+DATADATA_API_KEY=""
+
+# API Keys
+RUNPOD_API_KEY="your-runpod-api-key"
+
+# Server
+API_PORT=3423
+
+# Webhooks
+CHANGELOG_WEBHOOK_SECRET=""
+
+# Exporter (optional for local dev)
+EXPORTER_BUCKET_NAME=""
+EXPORTER_FILE_PATH=""
+EXPORTER_ACCESS_KEY=""
+EXPORTER_SECRET_KEY=""
+
+# Mastra (optional for local dev)
+MASTRA_AGENT_URL=""
+RUNPOD_ASSISTANT_API_KEY=""
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Development setup" icon="laptop-code" href="/development/setup">
+    Complete setup guide for local development
+  </Card>
+  <Card title="Creating commands" icon="code" href="/development/commands">
+    Build slash commands, buttons, and modals
+  </Card>
+</CardGroup>

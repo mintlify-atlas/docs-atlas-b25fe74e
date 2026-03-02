@@ -1,0 +1,383 @@
+---
+title: Database setup and management
+description: Working with PostgreSQL and Prisma in Poddy
+---
+
+## Overview
+
+Poddy uses **PostgreSQL** as its database and **Prisma** as the ORM. For local development, PostgreSQL runs in a Docker container managed by Docker Compose.
+
+## Database commands
+
+These npm scripts manage the PostgreSQL database:
+
+<CodeGroup>
+
+```bash Start database
+pnpm db:start
+```
+
+```bash Stop database
+pnpm db:stop
+```
+
+```bash Reset database
+pnpm db:reset
+```
+
+```bash Run migrations
+pnpm db:migrate
+```
+
+```bash Open Prisma Studio
+pnpm db:studio
+```
+
+</CodeGroup>
+
+### Command details
+
+| Command | What it does |
+|---------|-------------|
+| `pnpm db:start` | Starts PostgreSQL container via Docker Compose (`docker compose up -d postgres`) |
+| `pnpm db:stop` | Stops the PostgreSQL container (`docker compose stop postgres`) |
+| `pnpm db:reset` | **Destroys and recreates** the database (`docker compose down -v && docker compose up -d postgres`) |
+| `pnpm db:migrate` | Applies schema changes to the database (`npx prisma migrate dev`) |
+| `pnpm db:studio` | Opens Prisma Studio, a visual database browser (`npx prisma studio`) |
+
+<Warning>
+  `pnpm db:reset` will **delete all data** in your local database. Use with caution.
+</Warning>
+
+## Prisma schema
+
+The database schema is defined in `prisma/schema.prisma`. Here's the basic structure:
+
+```prisma
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "./__generated__/"
+}
+
+// Models define your database tables
+model User {
+  id        String   @id
+  createdAt DateTime @default(now())
+}
+```
+
+### Key models
+
+Poddy includes models for:
+
+- **Cooldown** - Command cooldowns
+- **ZendeskTicket** - Escalated support tickets
+- **Event** - Community events and submissions
+- **Message** - Message logging and history
+- **Tag** - Custom server tags
+- **QAAllowedChannel** - Channels where AI Q&A is enabled
+- **BetterStackStatusReport** - Incident status reports
+
+See `prisma/schema.prisma` for the complete schema.
+
+## Working with Prisma
+
+### Accessing the Prisma client
+
+The generated Prisma client is available via the `@db/*` path alias:
+
+```typescript
+import { PrismaClient } from "@db/client.js";
+import type { User } from "@db/client.js";
+```
+
+In command handlers, access Prisma through the client:
+
+```typescript
+export default class MyCommand extends ApplicationCommand {
+  public override async run({ interaction, language }) {
+    // Access Prisma via this.client.prisma
+    const user = await this.client.prisma.user.findUnique({
+      where: { id: interaction.user.id }
+    });
+  }
+}
+```
+
+### Creating a migration
+
+<Steps>
+  <Step title="Edit the schema">
+    Modify `prisma/schema.prisma` to add or change models:
+
+    ```prisma
+    model Tag {
+      id        String   @id
+      name      String
+      content   String
+      authorId  String
+      createdAt DateTime
+    }
+    ```
+  </Step>
+
+  <Step title="Create the migration">
+    Run the migrate command:
+
+    ```bash
+    pnpm db:migrate
+    ```
+
+    Prisma will:
+    1. Prompt you to name the migration
+    2. Generate SQL migration files in `prisma/migrations/`
+    3. Apply the migration to your database
+    4. Regenerate the Prisma client
+  </Step>
+
+  <Step title="Verify the changes">
+    Open Prisma Studio to view the updated schema:
+
+    ```bash
+    pnpm db:studio
+    ```
+
+    Navigate to `http://localhost:5555` to browse your database.
+  </Step>
+</Steps>
+
+### Regenerating the Prisma client
+
+After schema changes, regenerate the client:
+
+```bash
+npx prisma generate
+```
+
+This updates the TypeScript types and client in `prisma/__generated__/`.
+
+<Note>
+  `pnpm db:migrate` automatically runs `prisma generate`, so you usually don't need to run it manually.
+</Note>
+
+## Common Prisma operations
+
+### Create a record
+
+```typescript
+const ticket = await this.client.prisma.zendeskTicket.create({
+  data: {
+    id: ticketId,
+    escalatedId: messageId,
+    escalatedById: userId,
+    type: "MESSAGE"
+  }
+});
+```
+
+### Find a record
+
+```typescript
+const ticket = await this.client.prisma.zendeskTicket.findUnique({
+  where: { escalatedId: messageId }
+});
+```
+
+### Update a record
+
+```typescript
+const ticket = await this.client.prisma.zendeskTicket.update({
+  where: { id: ticketId },
+  data: { type: "THREAD" }
+});
+```
+
+### Upsert (create or update)
+
+```typescript
+const cooldown = await this.client.prisma.cooldown.upsert({
+  where: {
+    commandName_commandType_userId: {
+      commandName: this.name,
+      commandType: CommandType.APPLICATION_COMMAND,
+      userId
+    }
+  },
+  update: { expiresAt: new Date(Date.now() + 5000) },
+  create: {
+    commandName: this.name,
+    commandType: CommandType.APPLICATION_COMMAND,
+    userId,
+    expiresAt: new Date(Date.now() + 5000)
+  }
+});
+```
+
+### Delete a record
+
+```typescript
+await this.client.prisma.zendeskTicket.delete({
+  where: { id: ticketId }
+});
+```
+
+## Database connection
+
+The database connection string is configured via the `DATABASE_URL` environment variable:
+
+```bash
+DATABASE_URL="postgresql://user:password@localhost:5432/poddy"
+```
+
+For local development, this is typically set in `.env.dev`.
+
+### Connection pooling
+
+Poddy uses `@prisma/adapter-pg` for connection pooling with the native `pg` driver:
+
+```typescript
+import { PrismaPg } from "@prisma/adapter-pg";
+import { PrismaClient } from "@prisma/client";
+import pg from "pg";
+
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const adapter = new PrismaPg(pool);
+const prisma = new PrismaClient({ adapter });
+```
+
+## Prisma Studio
+
+Prisma Studio is a visual database browser that runs at `http://localhost:5555`:
+
+```bash
+pnpm db:studio
+```
+
+<Frame>
+  <img src="/images/prisma-studio.png" alt="Prisma Studio interface" />
+</Frame>
+
+Use it to:
+- Browse and search records
+- Create, update, and delete data
+- Test queries during development
+- Inspect relationships between models
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Migration fails with 'relation already exists'">
+    Your database schema is out of sync. Reset and re-run migrations:
+
+    ```bash
+    pnpm db:reset
+    pnpm db:migrate
+    ```
+
+    This will destroy all data, so only do this in development.
+  </Accordion>
+
+  <Accordion title="Prisma client types are outdated">
+    Regenerate the Prisma client:
+
+    ```bash
+    npx prisma generate
+    ```
+
+    Then restart your TypeScript server or rebuild:
+
+    ```bash
+    pnpm build
+    ```
+  </Accordion>
+
+  <Accordion title="Can't connect to database">
+    Ensure the PostgreSQL container is running:
+
+    ```bash
+    docker ps | grep postgres
+    ```
+
+    If not running, start it:
+
+    ```bash
+    pnpm db:start
+    ```
+
+    Check your `DATABASE_URL` in `.env.dev` is correct.
+  </Accordion>
+
+  <Accordion title="Import errors with @db/* alias">
+    The Prisma client must be generated first:
+
+    ```bash
+    npx prisma generate
+    ```
+
+    The generated client is in `prisma/__generated__/` and imported via `@db/*`.
+  </Accordion>
+</AccordionGroup>
+
+## Best practices
+
+<CardGroup cols={2}>
+  <Card title="Use transactions" icon="arrows-rotate">
+    For multiple related operations, use Prisma transactions to ensure atomicity:
+
+    ```typescript
+    await this.client.prisma.$transaction([
+      this.client.prisma.user.create({ data: { id: "1" } }),
+      this.client.prisma.tag.create({ data: { id: "1", authorId: "1" } })
+    ]);
+    ```
+  </Card>
+
+  <Card title="Handle errors" icon="circle-exclamation">
+    Always handle Prisma errors, especially unique constraint violations:
+
+    ```typescript
+    try {
+      await this.client.prisma.user.create({ data: { id: userId } });
+    } catch (error) {
+      if (error.code === "P2002") {
+        // Unique constraint violation
+      }
+    }
+    ```
+  </Card>
+
+  <Card title="Format schema" icon="paintbrush">
+    Use Prisma's formatter:
+
+    ```bash
+    npx prisma format
+    ```
+
+    This runs automatically via pre-commit hooks.
+  </Card>
+
+  <Card title="Test migrations" icon="flask">
+    Always test migrations in development before production:
+
+    ```bash
+    pnpm db:reset
+    pnpm db:migrate
+    # Test your bot functionality
+    ```
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Creating commands" icon="code" href="/development/commands">
+    Learn how to build commands that use the database
+  </Card>
+  <Card title="Prisma documentation" icon="book" href="https://www.prisma.io/docs">
+    Official Prisma documentation
+  </Card>
+</CardGroup>

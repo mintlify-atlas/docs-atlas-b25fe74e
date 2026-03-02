@@ -1,0 +1,336 @@
+---
+title: Language system
+description: Internationalization and localization system for multi-language support
+---
+
+Poddy's language system provides type-safe translations with interpolation support. Currently supports English (en-US) with infrastructure for additional languages.
+
+## Architecture
+
+The system consists of three main components:
+
+- **Language** - Individual language instances with translation keys
+- **LanguageHandler** - Manages all languages and provides localization utilities
+- **Type generation** - Auto-generates TypeScript types from language files
+
+## Using translations
+
+### Get a translation
+
+Access translations through the language handler:
+
+```typescript
+// Get default language (en-US)
+const lang = client.languageHandler.defaultLanguage;
+
+// Simple translation
+const message = lang.get('PING_COMMAND_NAME');
+// Returns: "ping"
+
+// Get user's language
+const userLang = client.languageHandler.getLanguage(interaction.locale);
+const text = userLang.get('PONG');
+```
+
+### Translations with variables
+
+Use interpolation for dynamic values:
+
+```typescript
+// Language file: "PONG": "Pong! (Host latency of {{hostLatency}}ms)"
+
+const message = lang.get('PONG', {
+  hostLatency: 42
+});
+// Returns: "Pong! (Host latency of 42ms)"
+
+// Multiple variables
+// "TICKET_CREATED_DESCRIPTION": "Your ticket has been created, check your email for ticket #{{ticketId}}!"
+const response = lang.get('TICKET_CREATED_DESCRIPTION', {
+  ticketId: 12345
+});
+// Returns: "Your ticket has been created, check your email for ticket #12345!"
+```
+
+## Language class
+
+Represents a single language with its translations.
+
+### Properties
+
+<ParamField path="id" type="Locale" required>
+  The Discord locale identifier (e.g., "en-US", "es-ES")
+</ParamField>
+
+<ParamField path="enabled" type="boolean" required>
+  Whether this language is active
+</ParamField>
+
+<ParamField path="language" type="LanguageOptions" required>
+  The translation key-value pairs
+</ParamField>
+
+### Methods
+
+#### get
+
+Translate a key with optional interpolation.
+
+<ParamField path="key" type="LanguageKeys" required>
+  The translation key to look up
+</ParamField>
+
+<ParamField path="args" type="object">
+  Variables to interpolate into the translation
+</ParamField>
+
+```typescript
+const lang = client.languageHandler.getLanguage('en-US');
+
+// Simple key
+lang.get('PING_COMMAND_NAME'); // "ping"
+
+// With variables
+lang.get('EMBED_CREATED_DESCRIPTION', {
+  embedName: 'Welcome',
+  embedId: 'abc123'
+});
+// Returns: "Embed **Welcome** `[abc123]` has been created!"
+```
+
+#### has
+
+Check if a translation key exists.
+
+<ParamField path="key" type="string" required>
+  The key to check
+</ParamField>
+
+```typescript
+if (lang.has('CUSTOM_MESSAGE')) {
+  const text = lang.get('CUSTOM_MESSAGE');
+}
+```
+
+## LanguageHandler class
+
+Manages all languages and provides localization utilities.
+
+### Properties
+
+<ParamField path="languages" type="Set<Language>" required>
+  All loaded language instances
+</ParamField>
+
+<ParamField path="defaultLanguage" type="Language | null" required>
+  The default fallback language (en-US)
+</ParamField>
+
+### Methods
+
+#### getLanguage
+
+Get a language by locale ID.
+
+<ParamField path="languageId" type="string">
+  The locale identifier. Falls back to default if not found
+</ParamField>
+
+```typescript
+// Get user's language, fallback to default
+const userLang = client.languageHandler.getLanguage(
+  interaction.locale
+);
+
+// Always get default
+const defaultLang = client.languageHandler.getLanguage();
+```
+
+#### generateLocalizationsForApplicationCommandOptionType
+
+Generate localized name and description for slash command options.
+
+<ParamField path="name" type="LanguageKeys" required>
+  The translation key for the option name
+</ParamField>
+
+<ParamField path="description" type="LanguageKeys" required>
+  The translation key for the option description
+</ParamField>
+
+<ParamField path="nameArgs" type="object">
+  Variables for the name translation
+</ParamField>
+
+<ParamField path="descriptionArgs" type="object">
+  Variables for the description translation
+</ParamField>
+
+```typescript
+const option = client.languageHandler
+  .generateLocalizationsForApplicationCommandOptionType({
+    name: 'PING_COMMAND_NAME',
+    description: 'PING_COMMAND_DESCRIPTION'
+  });
+
+// Returns:
+// {
+//   name: "ping",
+//   description: "Pong! Get the current ping / latency of the Poddy.",
+//   name_localizations: {},
+//   description_localizations: {}
+// }
+```
+
+#### generateLocalizationsForApplicationCommandOptionTypeStringWithChoices
+
+Generate localizations for string option choices.
+
+```typescript
+const choice = client.languageHandler
+  .generateLocalizationsForApplicationCommandOptionTypeStringWithChoices({
+    name: 'EVENTS_COMMAND_EDIT_SUB_COMMAND_GROUP_STATUS_SUB_COMMAND_STATUS_OPTION_CHOICES_ACTIVE'
+  });
+
+// Returns:
+// {
+//   name: "Active",
+//   name_localizations: {}
+// }
+```
+
+## Adding new translations
+
+### 1. Add to language file
+
+Edit `languages/en-US.ts`:
+
+```typescript
+export default {
+  // ... existing keys
+  
+  MY_NEW_KEY: "Hello, world!",
+  MY_INTERPOLATED_KEY: "Hello, {{name}}!",
+  MY_COMMAND_NAME: "mycommand",
+  MY_COMMAND_DESCRIPTION: "Does something cool",
+};
+```
+
+### 2. Generate types
+
+Run the type generator:
+
+```bash
+pnpm translate
+```
+
+This updates `typings/language.d.ts` with type definitions for all keys and their interpolation variables.
+
+### 3. Use the new translations
+
+```typescript
+// Type-safe access
+const text = lang.get('MY_NEW_KEY');
+
+// With interpolation (types enforce correct variables)
+const greeting = lang.get('MY_INTERPOLATED_KEY', {
+  name: 'Alice'
+});
+// Returns: "Hello, Alice!"
+```
+
+## Translation key conventions
+
+Follow these naming patterns:
+
+```typescript
+// Commands
+PING_COMMAND_NAME: "ping",
+PING_COMMAND_DESCRIPTION: "Get the bot's latency",
+
+// Subcommands
+CONFIG_AUTO_THREAD_CHANNEL_SUB_COMMAND_GROUP_NAME: "auto_thread_channel",
+CONFIG_AUTO_THREAD_CHANNEL_SUB_COMMAND_GROUP_DESCRIPTION: "Manage auto thread channels",
+
+// Options
+CONFIG_AUTO_THREAD_CHANNEL_SUB_COMMAND_GROUP_ADD_SUB_COMMAND_CHANNEL_OPTION_NAME: "channel",
+CONFIG_AUTO_THREAD_CHANNEL_SUB_COMMAND_GROUP_ADD_SUB_COMMAND_CHANNEL_OPTION_DESCRIPTION: "The channel to add",
+
+// Messages
+ERROR_OCCURRED_TITLE: "An Error Occurred",
+ERROR_OCCURRED_DESCRIPTION: "Something went wrong. Please try again.",
+
+// Time units (for format() function)
+SECOND_ONE: "second",
+SECOND_OTHER: "seconds",
+SECOND_SHORT: "s",
+```
+
+## Interpolation syntax
+
+Use `{{variableName}}` in translation strings:
+
+```typescript
+// Language file
+TICKET_CREATED_DESCRIPTION: "Ticket #{{ticketId}} created for {{userEmail}}",
+
+// Usage
+lang.get('TICKET_CREATED_DESCRIPTION', {
+  ticketId: 12345,
+  userEmail: 'user@runpod.io'
+});
+// Returns: "Ticket #12345 created for user@runpod.io"
+```
+
+## Type safety
+
+The generated `language.d.ts` provides full type safety:
+
+```typescript
+// ✅ Correct usage
+lang.get('PONG', { hostLatency: 42 });
+
+// ❌ TypeScript error: Missing required variable
+lang.get('PONG');
+
+// ❌ TypeScript error: Invalid variable name
+lang.get('PONG', { latency: 42 });
+
+// ❌ TypeScript error: Invalid key
+lang.get('NONEXISTENT_KEY');
+```
+
+## Adding a new language
+
+### 1. Create language file
+
+Create `languages/es-ES.ts`:
+
+```typescript
+export default {
+  LANGUAGE_ENABLED: true,
+  LANGUAGE_ID: "es-ES",
+  LANGUAGE_NAME: "Español",
+  
+  PING_COMMAND_NAME: "ping",
+  PING_COMMAND_DESCRIPTION: "Obtener la latencia del bot",
+  PONG: "¡Pong! (Latencia de {{hostLatency}}ms)",
+  // ... more translations
+};
+```
+
+### 2. System loads automatically
+
+The LanguageHandler automatically discovers and loads all `.ts` files in the `languages/` directory during startup.
+
+### 3. Translations fall back gracefully
+
+If a key is missing in a language, it falls back to the default language (en-US):
+
+```typescript
+const esLang = client.languageHandler.getLanguage('es-ES');
+
+// If SOME_NEW_KEY doesn't exist in es-ES
+esLang.get('SOME_NEW_KEY');
+// Returns the en-US version instead
+```

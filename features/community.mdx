@@ -1,0 +1,435 @@
+---
+title: Community features
+description: Tags, events with submission voting, and invite tracking for community engagement
+---
+
+Poddy provides tools for community managers to create reusable content, run events with voting systems, and track invite analytics.
+
+## Tags
+
+Tags are reusable text snippets that moderators can create, edit, and share across the server.
+
+### Creating and managing tags
+
+<CodeGroup>
+```typescript Creating a tag
+const tag = await this.client.prisma.tag.create({
+  data: {
+    id: randomUUID(),
+    name,
+    content,
+    authorId: interaction.member!.user.id,
+    createdAt: new Date(),
+  },
+});
+```
+
+```typescript Editing a tag
+const updatedTag = await this.client.prisma.tag.update({
+  where: { id: tag.id },
+  data: { content },
+});
+```
+
+```typescript Deleting a tag
+await this.client.prisma.tag.delete({
+  where: { id: tag.id },
+});
+```
+</CodeGroup>
+
+### Tag lookup
+
+Tags support case-insensitive name lookup or ID-based retrieval:
+
+```typescript src/bot/applicationCommands/tags/tags.ts
+const tag = await this.client.prisma.tag.findFirst({
+  where: {
+    OR: [
+      { id: name },
+      {
+        name: {
+          equals: name,
+          mode: "insensitive",
+        },
+      },
+    ],
+  },
+});
+```
+
+<Accordion title="Tag data model">
+```prisma prisma/schema.prisma
+model Tag {
+  id        String   @id
+  name      String
+  content   String
+  authorId  String
+  createdAt DateTime
+}
+```
+</Accordion>
+
+<Note>
+Tags require the `ManageMessages` permission to create, edit, or delete.
+</Note>
+
+## Events and submissions
+
+Events allow community managers to run contests, challenges, or showcases where users submit content and vote on their favorites.
+
+### Creating an event
+
+Events are created with a name, description, and submission channel:
+
+```typescript src/bot/applicationCommands/events/events.ts
+event = await this.client.prisma.event.create({
+  data: {
+    guildId: interaction.guild_id!,
+    name,
+    description: description ?? null,
+    channelId: channel.id,
+  },
+});
+```
+
+### Event properties
+
+<CardGroup cols={2}>
+  <Card title="Active status" icon="toggle-on">
+    Events can be toggled active/inactive to control when submissions are accepted.
+  </Card>
+  <Card title="Code rewards" icon="gift">
+    Events can offer RunPod credit codes to top submissions (e.g., $10 for winners).
+  </Card>
+  <Card title="Code logging" icon="list">
+    Configure a channel to log code redemptions for tracking.
+  </Card>
+  <Card title="Voting system" icon="thumbs-up">
+    Users upvote submissions, and top entries are ranked by vote count.
+  </Card>
+</CardGroup>
+
+### Submitting to an event
+
+Users submit images or videos via the `/submit` command:
+
+```typescript src/bot/applicationCommands/events/submit.ts
+// Check if user already submitted
+const submission = await this.client.prisma.submission.findUnique({
+  where: {
+    userId_eventId: {
+      userId: (interaction.member ?? interaction).user!.id,
+      eventId: event.id,
+    },
+  },
+});
+
+if (submission) {
+  // User can only submit once per event
+  return this.client.api.interactions.reply(interaction.id, interaction.token, {
+    embeds: [{
+      title: language.get("ALREADY_SUBMITTED_TITLE"),
+      description: language.get("ALREADY_SUBMITTED_DESCRIPTION"),
+      color: this.client.config.colors.error,
+    }],
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+// Fetch attachment from Discord
+const response = await fetch(attachment.url);
+const buffer = Buffer.from(await response.arrayBuffer());
+const extension = attachment.filename.split(".").pop()!;
+
+// Post submission to event channel
+const message = await this.client.api.channels.createMessage(event.channelId, {
+  embeds: attachment.content_type?.includes("video") ? [] : [{
+    author: {
+      name: user.global_name ?? user.username,
+      icon_url: `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png`,
+    },
+    image: {
+      url: `attachment://submission_${user.id}.${extension}`,
+    },
+    color: this.client.config.colors.primary,
+  }],
+  components: [{
+    components: [{
+      custom_id: "upvote",
+      label: "Upvote",
+      type: ComponentType.Button,
+      style: ButtonStyle.Success,
+      emoji: { name: "⬆️" },
+    }],
+    type: ComponentType.ActionRow,
+  }],
+  files: [{
+    data: buffer,
+    name: `submission_${user.id}.${extension}`,
+    key: `files[${attachment.id}]`,
+  }],
+});
+
+// Record submission in database
+await this.client.prisma.submission.create({
+  data: {
+    eventId: event.id,
+    messageId: message.id,
+    userId: user.id,
+  },
+});
+```
+
+### Voting system
+
+Users click the upvote button on submissions. Poddy enforces one vote per user per event:
+
+```typescript src/bot/buttons/events/upvote.ts
+const submission = await this.client.prisma.submission.findUnique({
+  where: { messageId: interaction.message.id }
+});
+
+if (!submission) {
+  // Not a valid submission
+  return;
+}
+
+// Upsert ensures user can only vote once per event
+// If they already voted, it updates to the current submission
+await this.client.prisma.submissionUpvote.upsert({
+  where: {
+    userId_eventId: {
+      userId: (interaction.member ?? interaction).user!.id,
+      eventId: submission.eventId,
+    },
+  },
+  create: {
+    userId: (interaction.member ?? interaction).user!.id,
+    eventId: submission.eventId,
+    submissionId: submission.messageId,
+  },
+  update: {
+    submissionId: submission.messageId,
+  },
+});
+```
+
+<Info>
+The `userId_eventId` compound unique key in `SubmissionUpvote` prevents users from voting multiple times in the same event. If they upvote a different submission, their vote moves to the new one.
+</Info>
+
+### Viewing top submissions
+
+Staff can retrieve the top submissions ranked by votes:
+
+```typescript src/bot/applicationCommands/events/events.ts
+const submissions = await this.client.prisma.submission.findMany({
+  where: { eventId: event.id },
+});
+
+const upvotes = await this.client.prisma.submissionUpvote.findMany({
+  where: { eventId: event.id },
+  include: { submission: true },
+});
+
+// Count votes per submission
+const upvoteTotals = new Map<string, number>();
+for (const upvote of upvotes) {
+  const total = upvoteTotals.get(upvote.submissionId) ?? 0;
+  upvoteTotals.set(upvote.submissionId, total + 1);
+}
+
+// Sort by vote count and take top N
+const sortedSubmissions = [...upvoteTotals.entries()]
+  .sort((a, b) => b[1] - a[1])
+  .map(([submissionId, votes]) => ({
+    ...submissions.find((submission) => submission.messageId === submissionId)!,
+    votes,
+  }))
+  .slice(0, amount);
+```
+
+### Event database schema
+
+```prisma prisma/schema.prisma
+model Event {
+  id               String  @id @default(cuid())
+  guildId          String
+  channelId        String
+  name             String
+  active           Boolean @default(true)
+  description      String?
+  codeAmount       Int?     // Dollar amount per code (e.g., 10 = $10)
+  codeLogChannelId String?
+
+  submissions    Submission[]
+  generatedCodes GeneratedCode[]
+
+  @@unique([name, guildId])
+}
+
+model Submission {
+  userId    String
+  eventId   String
+  messageId String @unique
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  upvotes SubmissionUpvote[]
+
+  @@id([userId, eventId])
+}
+
+model SubmissionUpvote {
+  userId       String
+  submissionId String
+  eventId      String
+
+  submission Submission @relation(fields: [submissionId], references: [messageId], onDelete: Cascade)
+
+  @@id([userId, submissionId])
+  @@unique([userId, eventId])  // One vote per user per event
+}
+
+model GeneratedCode {
+  code        String @id
+  eventId     String
+  userId      String
+  runpodEmail String
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([runpodEmail, eventId])
+  @@unique([userId, eventId])
+  @@map("generated_codes")
+}
+```
+
+## Invite tracking
+
+Poddy tracks custom Discord invites to measure campaign effectiveness and referral sources.
+
+### Creating tracked invites
+
+Staff create invites with custom names and descriptions:
+
+```typescript src/bot/applicationCommands/invites/invites.ts
+const invite = await this.client.api.channels.createInvite(channel.id, {
+  max_age,
+  max_uses,
+  unique: true,
+});
+
+await this.client.prisma.invite.create({
+  data: {
+    name,
+    description,
+    code: invite.code,
+    channelId: channel.id,
+    createdBy: interaction.member!.user.id,
+    guildId: interaction.guild_id!,
+    maxAge: invite.max_age,
+    maxUses: invite.max_uses,
+    uses: invite.uses,
+  },
+});
+```
+
+### Tracking existing invites
+
+Staff can track external invites by providing the invite URL:
+
+```typescript src/bot/applicationCommands/invites/invites.ts
+const { inviteCode } = this.inviteCodeRegex.exec(invite)?.groups ?? {};
+
+let inviteData: APIExtendedInvite;
+try {
+  inviteData = await this.client.api.invites.get(inviteCode, {
+    with_counts: true,
+    with_expiration: true,
+  }) as APIExtendedInvite;
+} catch (error) {
+  if (error instanceof DiscordAPIError && error.code === RESTJSONErrorCodes.UnknownInvite) {
+    // Invalid invite
+    return;
+  }
+  throw error;
+}
+
+// Verify invite belongs to this server
+if (inviteData.guild?.id !== interaction.guild_id!) {
+  // Wrong server
+  return;
+}
+
+// Store or update invite tracking
+await this.client.prisma.invite.upsert({
+  where: { code: inviteCode },
+  create: {
+    code: inviteCode,
+    channelId: interaction.channel.id,
+    createdBy: interaction.member!.user.id,
+    guildId: interaction.guild_id!,
+    uses: inviteData.uses ?? 0,
+    maxAge: inviteData.max_age,
+    maxUses: inviteData.max_uses,
+    name,
+    description,
+  },
+  update: { name, description },
+});
+```
+
+### Invite analytics
+
+The `/invites info` command shows detailed invite statistics:
+
+```typescript
+return this.client.api.interactions.reply(interaction.id, interaction.token, {
+  embeds: [{
+    title: language.get("INVITES_INFO_TITLE"),
+    description: `**Name:** ${invite.name}${
+      invite.description ? `\n**Description:** ${invite.description}` : ""
+    }\n**URL:** https://discord.gg/${invite.code}\n**Uses:** ${inviteData.uses}${
+      inviteData.max_uses ? `/${inviteData.max_uses}` : ""
+    }\n**Expires:** ${
+      inviteData.expires_at ? `<t:${new Date(inviteData.expires_at).getTime() / 1_000}:F>` : "Never"
+    }`,
+    color: this.client.config.colors.primary,
+  }],
+});
+```
+
+<Accordion title="Invite data model">
+```prisma prisma/schema.prisma
+model Invite {
+  code        String   @id
+  name        String
+  description String?
+  channelId   String?
+  createdBy   String
+  guildId     String
+  uses        Int      @default(0)
+  createdAt   DateTime @default(now())
+  maxAge      Int?
+  maxUses     Int?
+
+  @@map("invites")
+}
+
+model MemberEvent {
+  id         String   @id @default(cuid(2))
+  inviteCode String?
+  userId     String
+  guildId    String
+  joinedAt   DateTime
+  timestamp  DateTime @default(now())
+
+  @@map("member_joins")
+}
+```
+</Accordion>
+
+<Note>
+When a member joins, Poddy logs the `inviteCode` used in the `MemberEvent` table for attribution tracking.
+</Note>

@@ -1,80 +1,317 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Get Poddy running in minutes with this quick setup guide
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
+Before you begin, ensure you have:
 
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Node.js 24" icon="node-js">
+    Required runtime version
+  </Card>
+  <Card title="pnpm 10" icon="box">
+    Package manager
+  </Card>
+  <Card title="Docker" icon="docker">
+    For PostgreSQL database
+  </Card>
+  <Card title="Discord bot token" icon="discord">
+    From Discord Developer Portal
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  If you need detailed installation instructions for these prerequisites, see the [Installation guide](/installation).
 </Note>
+
+## Quick setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/runpod/poddy.git
+    cd poddy
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    The Prisma client is generated automatically during installation:
+    
+    ```bash
+    pnpm install
+    ```
+    
+    <Note>
+      This will install all dependencies and automatically run `prisma generate` to create the database client.
+    </Note>
+  </Step>
+
+  <Step title="Configure environment">
+    Copy the example environment file and fill in your values:
+    
+    ```bash
+    cp .env.example .env.dev
+    ```
+    
+    Edit `.env.dev` with your configuration:
+    
+    <CodeGroup>
+    ```bash .env.dev
+    # Required Discord credentials
+    DISCORD_TOKEN="your-bot-token"
+    APPLICATION_ID="your-application-id"
+    
+    # Development guild for testing slash commands
+    DEVELOPMENT_GUILD_ID="your-test-server-id"
+    
+    # Database connection (matches docker-compose.yml)
+    DATABASE_URL="postgresql://poddy:poddy_dev_password@localhost:5432/poddy_dev"
+    
+    # HTTP server port
+    API_PORT=3423
+    
+    # Optional but recommended
+    SENTRY_DSN=""
+    DATADOG_API_KEY=""
+    RUNPOD_API_KEY=""
+    
+    # AI Q&A (optional)
+    MASTRA_AGENT_URL=""
+    RUNPOD_ASSISTANT_API_KEY=""
+    
+    # Webhooks (optional)
+    CHANGELOG_WEBHOOK_SECRET=""
+    
+    # Data export (optional)
+    EXPORTER_BUCKET_NAME=""
+    EXPORTER_FILE_PATH=""
+    EXPORTER_ACCESS_KEY=""
+    EXPORTER_SECRET_KEY=""
+    ```
+    </CodeGroup>
+    
+    <Warning>
+      The `DATABASE_URL` must match the credentials in `docker-compose.yml` for local development.
+    </Warning>
+  </Step>
+
+  <Step title="Start the database">
+    Launch PostgreSQL using Docker Compose:
+    
+    ```bash
+    pnpm db:start
+    ```
+    
+    This starts a PostgreSQL 16 container with:
+    - **Container name**: `poddy-postgres`
+    - **Port**: 5432
+    - **User**: `poddy`
+    - **Password**: `poddy_dev_password`
+    - **Database**: `poddy_dev`
+  </Step>
+
+  <Step title="Apply database migrations">
+    Create the database schema:
+    
+    ```bash
+    pnpm db:migrate
+    ```
+    
+    This runs all Prisma migrations to set up tables for:
+    - Command cooldowns
+    - User preferences and languages
+    - Auto-threading and auto-tagging
+    - Custom embeds and tags
+    - Event management and submissions
+    - Zendesk ticket tracking
+    - Logging and audit trails
+    - Better Stack incident reports
+  </Step>
+
+  <Step title="Build and run the bot">
+    Compile TypeScript and start the bot in development mode:
+    
+    ```bash
+    pnpm build
+    ```
+    
+    <Note>
+      Despite the name, `pnpm build` both compiles **and** runs the bot. It's not just a build step!
+    </Note>
+    
+    The bot will:
+    1. Compile TypeScript to the `dist/` directory
+    2. Resolve path aliases using `tsc-alias`
+    3. Start in development mode (guild commands only)
+    4. Register slash commands to your development guild
+    5. Connect to Discord gateway with worker sharding
+  </Step>
+</Steps>
+
+## Verify it's working
+
+Once the bot starts, you should see:
+
+```bash
+[INFO] HTTP server started on port 3423
+[INFO] All shards have started.
+[DEBUG] [SHARD 0] Ready
+```
+
+In your Discord server:
+1. The bot should appear online
+2. Slash commands should be available (guild commands only in dev mode)
+3. Check the bot's presence status
+
+<Check>
+  Congratulations! Poddy is now running. Try using a slash command in your development server.
+</Check>
+
+## Development vs production modes
+
+Poddy has two distinct run modes:
+
+<Tabs>
+  <Tab title="Development mode">
+    **Command**: `pnpm build`
+    
+    - Uses `.env.dev` configuration
+    - Registers **guild commands** (instant updates)
+    - Debug logging enabled
+    - Points to `api.runpod.dev`
+    - Ideal for testing new features
+  </Tab>
+  
+  <Tab title="Production mode">
+    **Command**: `pnpm start`
+    
+    - Uses `.env.prod` configuration
+    - Registers **global commands** (can take up to 1 hour to propagate)
+    - Standard logging
+    - Points to `api.runpod.io`
+    - Used for the live RunPod Discord bot
+    
+    <Warning>
+      Production mode requires pre-compiled code. Run `pnpm build` first to compile, then stop the bot and run `pnpm start`.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Explore the codebase"
+    icon="folder-tree"
+    href="/architecture/overview"
+  >
+    Understand the project structure and architecture
+  </Card>
+  <Card
+    title="Database management"
+    icon="database"
+    href="/development/database"
+  >
+    Learn how to manage the database with Prisma
+  </Card>
+  <Card
+    title="Add a command"
+    icon="code"
+    href="/development/commands"
+  >
+    Create your first slash command
+  </Card>
+  <Card
+    title="Configure integrations"
+    icon="plug"
+    href="/features/integrations"
+  >
+    Set up Zendesk, BetterStack, and Mastra
+  </Card>
+</CardGroup>
+
+## Common issues
+
+<AccordionGroup>
+  <Accordion title="Database connection failed">
+    **Error**: `Can't reach database server at localhost:5432`
+    
+    **Solutions**:
+    1. Ensure PostgreSQL is running: `docker ps | grep poddy-postgres`
+    2. Start the database: `pnpm db:start`
+    3. Verify `DATABASE_URL` in `.env.dev` matches the docker-compose.yml credentials
+  </Accordion>
+  
+  <Accordion title="Type error: 'K' cannot be used to index type 'LanguageValues'">
+    **Cause**: Language type definitions are out of sync.
+    
+    **Solution**: Regenerate language typings:
+    ```bash
+    pnpm translate
+    ```
+  </Accordion>
+  
+  <Accordion title="Bot is offline in Discord">
+    **Possible causes**:
+    1. Invalid `DISCORD_TOKEN` in `.env.dev`
+    2. Bot token doesn't match the `APPLICATION_ID`
+    3. Insufficient bot permissions/intents in Discord Developer Portal
+    
+    **Solution**: Verify your bot configuration in the [Discord Developer Portal](https://discord.com/developers/applications).
+  </Accordion>
+  
+  <Accordion title="Slash commands not appearing">
+    **In development**:
+    - Commands are registered to `DEVELOPMENT_GUILD_ID` only
+    - Verify the guild ID is correct
+    - Commands should appear instantly after bot starts
+    
+    **In production**:
+    - Global commands can take up to 1 hour to propagate
+    - Be patient or use development mode for testing
+  </Accordion>
+  
+  <Accordion title="Port 3423 already in use">
+    **Solution**: Change `API_PORT` in `.env.dev` to an available port:
+    ```bash
+    API_PORT=3424
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Useful commands
+
+<CodeGroup>
+```bash Database
+# Start PostgreSQL
+pnpm db:start
+
+# Stop PostgreSQL
+pnpm db:stop
+
+# Reset database (deletes all data)
+pnpm db:reset
+
+# Apply schema changes
+pnpm db:migrate
+
+# Open Prisma Studio (GUI)
+pnpm db:studio
+```
+
+```bash Development
+# Build and run in dev mode
+pnpm build
+
+# Run in production mode
+pnpm start
+
+# Regenerate language typings
+pnpm translate
+
+# Format and lint code
+pnpm biome check --write
+```
+</CodeGroup>

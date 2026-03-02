@@ -1,0 +1,149 @@
+---
+title: Welcome to Poddy
+description: The Discord bot for the RunPod community server, handling support workflows, community features, and AI-assisted Q&A
+---
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.png"
+  alt="Poddy Hero Light"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.png"
+  alt="Poddy Hero Dark"
+/>
+
+## What is Poddy?
+
+Poddy is a powerful Discord bot built specifically for the RunPod community server. It streamlines support operations, enhances community engagement, and provides intelligent assistance through AI-powered Q&A.
+
+### Key features
+
+<CardGroup cols={2}>
+  <Card
+    title="Support automation"
+    icon="headset"
+    href="/features/support-workflows"
+  >
+    Automatic thread creation, Zendesk integration, and seamless escalation workflows
+  </Card>
+  <Card
+    title="Community tools"
+    icon="users"
+    href="/features/community"
+  >
+    Custom tags, event management, invite tracking, and member engagement features
+  </Card>
+  <Card
+    title="AI Q&A assistant"
+    icon="robot"
+    href="/features/integrations"
+  >
+    Powered by Mastra, providing instant answers to RunPod documentation questions
+  </Card>
+  <Card
+    title="Incident reporting"
+    icon="triangle-exclamation"
+    href="/features/integrations"
+  >
+    Real-time status updates from BetterStack for RunPod service incidents
+  </Card>
+</CardGroup>
+
+## Architecture overview
+
+Poddy is built on modern Discord infrastructure using the official Discord.js libraries:
+
+- **Core**: `@discordjs/core`, `@discordjs/rest`, `@discordjs/ws`
+- **Database**: PostgreSQL with Prisma ORM
+- **Runtime**: Node.js 24 with TypeScript
+- **Package manager**: pnpm v10
+- **HTTP server**: Hono for webhooks and API endpoints
+
+<Note>
+  Poddy uses the low-level Discord.js libraries instead of the high-level discord.js framework, providing better performance and more control over bot behavior.
+</Note>
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card
+    title="Quickstart"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Get Poddy up and running in minutes with our quick setup guide
+  </Card>
+  <Card
+    title="Installation"
+    icon="download"
+    href="/installation"
+  >
+    Detailed installation instructions with all prerequisites and configuration
+  </Card>
+  <Card
+    title="Configuration"
+    icon="gear"
+    href="/development/environment"
+  >
+    Learn how to configure environment variables and bot settings
+  </Card>
+  <Card
+    title="Development"
+    icon="code"
+    href="/development/setup"
+  >
+    Start contributing to Poddy with our development guide
+  </Card>
+</CardGroup>
+
+## Tech stack
+
+<AccordionGroup>
+  <Accordion title="Discord libraries">
+    - `@discordjs/core` - Core Discord API wrapper
+    - `@discordjs/rest` - REST API client
+    - `@discordjs/ws` - WebSocket gateway manager with worker sharding
+  </Accordion>
+  
+  <Accordion title="Database and ORM">
+    - PostgreSQL 16 (via Docker)
+    - Prisma ORM for type-safe database access
+    - Automated migrations and schema management
+  </Accordion>
+  
+  <Accordion title="Integrations">
+    - **Zendesk** - Support ticket creation and management
+    - **BetterStack** - Incident monitoring and status reporting
+    - **Mastra** - AI-powered documentation Q&A
+    - **Sentry** - Error tracking and monitoring
+    - **Datadog** - Metrics and performance monitoring
+  </Accordion>
+  
+  <Accordion title="Developer tooling">
+    - Biome for formatting and linting (120-char line width, tabs)
+    - Husky + lint-staged for pre-commit hooks
+    - TypeScript with strict type checking
+    - Path aliases for clean imports
+  </Accordion>
+</AccordionGroup>
+
+## Community and support
+
+<CardGroup cols={2}>
+  <Card
+    title="GitHub repository"
+    icon="github"
+    href="https://github.com/runpod/poddy"
+  >
+    View source code, report issues, and contribute
+  </Card>
+  <Card
+    title="RunPod Discord"
+    icon="discord"
+    href="https://discord.gg/runpod"
+  >
+    Join the community and see Poddy in action
+  </Card>
+</CardGroup>
